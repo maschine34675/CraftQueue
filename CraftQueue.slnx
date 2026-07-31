@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="CraftQueue.Client/CraftQueue.Client.csproj" />
+  <Project Path="CraftQueue.Server/CraftQueue.Server.csproj" />
+  <Project Path="CraftQueue.Tests/CraftQueue.Tests.csproj" />
+</Solution>

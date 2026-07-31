@@ -1,0 +1,10 @@
+.vs/
+bin/
+obj/
+*.suo
+*.user
+CraftQueue.Client/Libraries/
+CraftQueue.Server/SPT/
+artifacts/
+TestResults/
+*.zip

@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0</AssemblyVersion>
+    <FileVersion>1.0.0</FileVersion>
+    <Company>https://github.com/maschine34675/CraftQueue</Company>
+    <Authors>maschine</Authors>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>maschine-CraftQueue.Server</AssemblyName>
+    <OutputType>Library</OutputType>
+    <SPTModType>Server</SPTModType>
+    <LangVersion>latest</LangVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <Configurations>Debug;Release</Configurations>
+    <Nullable>enable</Nullable>
+    <DeployToSpt Condition="'$(DeployToSpt)' == ''">false</DeployToSpt>
+    <SptRoot Condition="'$(SptRoot)' == ''"></SptRoot>
+    <OverwriteSptConfig Condition="'$(OverwriteSptConfig)' == ''">false</OverwriteSptConfig>
+    <SptModName>CraftQueue</SptModName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\CraftQueue.Shared\CraftQueueProtocol.cs" Link="CraftQueueProtocol.cs" />
+    <Content Update="config\config.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SPTarkov.Common" Version="4.0.13" ExcludeAssets="runtime" />
+    <PackageReference Include="SPTarkov.DI" Version="4.0.13" ExcludeAssets="runtime" />
+    <PackageReference Include="SPTarkov.Reflection" Version="4.0.13" ExcludeAssets="runtime" />
+    <PackageReference Include="SPTarkov.Server.Core" Version="4.0.13" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <Target Name="DeployToSpt" AfterTargets="Build" Condition="'$(DeployToSpt)' == 'true'">
+    <Error Condition="'$(SptRoot)' == ''" Text="Set SptRoot when DeployToSpt=true." />
+    <PropertyGroup>
+      <ServerModDirectory>$(SptRoot)\SPT\user\mods\$(SptModName)</ServerModDirectory>
+    </PropertyGroup>
+    <MakeDir Directories="$(ServerModDirectory)\config" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ServerModDirectory)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(ServerModDirectory)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
+    <Copy SourceFiles="config\config.json"
+          DestinationFolder="$(ServerModDirectory)\config"
+          SkipUnchangedFiles="true"
+          Condition="'$(OverwriteSptConfig)' == 'true' Or !Exists('$(ServerModDirectory)\config\config.json')" />
+  </Target>
+
+</Project>
