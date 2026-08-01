@@ -2,7 +2,7 @@
 
 CraftQueue moves normal SPT hideout crafting into a central, local web interface. Crafts can be queued across stations, monitored, retried and cancelled without opening each hideout area.
 
-Version 1.0.0 targets SPT 4.0.13. Both parts must be installed: the BepInEx client plugin and the server mod.
+Version 1.1.0 targets SPT 4.0.13. Both parts must be installed: the BepInEx client plugin and the server mod.
 
 ## Features
 
@@ -78,7 +78,18 @@ Access is protected by two kinds of tokens:
 - The **host link** printed in the server console grants full access to every profile - keep it private.
 - Each EFT client receives a **personal link** in its BepInEx log (`your personal web interface: ...`). That link only ever sees and controls its own profile, so on a co-op server every player can be given their own link safely.
 
-Press **F9** in game to open your personal link in the default browser. The key can be rebound in the BepInEx configuration (`Web Interface > Open in browser`). Tokens are minted per server start; the F9 key and the logs always carry the current link.
+Press **F9** in game to open your personal interface. By default it appears as a window over the game; hold **Shift+F9** to open it in the external browser instead. Close the overlay with **F9** or **Escape** while it is focused, with its close button, or by clicking back into the game and pressing F9 again. The window can be moved and resized like any other. Both the key and the overlay can be changed in the BepInEx configuration (`Web Interface`). Tokens are minted per server start; the F9 key and the logs always carry the current link.
+
+The overlay needs the Microsoft WebView2 runtime, which current Windows 10 and 11 installations already include. Without it - or in exclusive fullscreen, where a window over the game would minimise it - CraftQueue silently uses the external browser instead. Run the game in borderless windowed mode for the overlay.
+
+## Third-party components
+
+`WebView2Loader.dll` ships with the mod and belongs to the Microsoft WebView2 SDK, licensed under BSD 3-Clause; see `WebView2-LICENSE.txt` and `WebView2-NOTICE.txt` in the archive. The WebView2 *runtime* itself is not redistributed - the mod uses the one installed on the system.
+
+## Mod compatibility
+
+- **Hideout In Progress (hip)**: compatible - hip handles area upgrades, CraftQueue handles productions; the two share no patched method, route or data.
+- **Hideout Automation**: not compatible with its production stacking - it is a second craft-queue system whose server patch can silently divert craft starts. At minimum disable `ProductionStacking` in its config; its server half stays active regardless, so running only one of the two mods is the safe choice.
 
 ## Co-op (Fika)
 

@@ -13,6 +13,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -48,6 +49,8 @@ namespace CraftQueue
         private bool processing;
 
         private ConfigEntry<KeyboardShortcut> openWebInterfaceKey;
+        private ConfigEntry<bool> useOverlay;
+        private CraftQueue.UI.WebOverlay overlay;
 
         private void Awake()
         {
@@ -56,7 +59,12 @@ namespace CraftQueue
                 "Web Interface",
                 "Open in browser",
                 new KeyboardShortcut(KeyCode.F9),
-                "Opens your personal CraftQueue web interface in the default browser.");
+                "Opens your personal CraftQueue web interface. Hold Shift to force the external browser.");
+            this.useOverlay = this.Config.Bind(
+                "Web Interface",
+                "Show as in-game overlay",
+                true,
+                "Show the web interface in a window over the game instead of the external browser. Needs the WebView2 runtime, which current Windows installs ship with; without it the browser is used.");
         }
 
         private void Update()
@@ -1086,9 +1094,86 @@ namespace CraftQueue
             }
 
             string url = "http://" + getWebLinkHost() + ":" + info.port + "/?token=" + Uri.EscapeDataString(info.token);
-            this.Logger.LogInfo("CraftQueue: opening " + url.Substring(0, url.IndexOf("?token=", StringComparison.Ordinal)) + " in the default browser.");
+            string safeUrl = url.Substring(0, url.IndexOf("?token=", StringComparison.Ordinal));
+
+            if (this.tryToggleOverlay(url))
+            {
+                this.Logger.LogInfo("CraftQueue: toggled the in-game overlay for " + safeUrl + ".");
+                return;
+            }
+
+            this.Logger.LogInfo("CraftQueue: opening " + safeUrl + " in the default browser.");
             Application.OpenURL(url);
         }
+        private bool tryToggleOverlay(string url)
+        {
+            if (!this.useOverlay.Value)
+                return false;
+            if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+                return false;
+
+            if (Screen.fullScreenMode == FullScreenMode.ExclusiveFullScreen)
+            {
+                this.Logger.LogInfo("CraftQueue: exclusive fullscreen cannot host the overlay; using the browser.");
+                return false;
+            }
+
+            if (this.overlay == null)
+                this.overlay = new CraftQueue.UI.WebOverlay(this.Logger.LogInfo, this.Logger.LogWarning);
+            if (this.overlay.Failed)
+                return false;
+
+            IntPtr gameWindow = findGameWindow();
+            if (gameWindow == IntPtr.Zero)
+            {
+                this.Logger.LogWarning("CraftQueue: the game window was not found; using the browser.");
+                return false;
+            }
+
+            return this.overlay.Toggle(url, gameWindow);
+        }
+
+        private void OnDestroy()
+        {
+            this.overlay?.Shutdown();
+        }
+
+        private static IntPtr findGameWindow()
+        {
+            IntPtr found = IntPtr.Zero;
+            EnumThreadWindows(GetCurrentThreadId(), (hwnd, param) =>
+            {
+                var className = new StringBuilder(256);
+                GetClassName(hwnd, className, className.Capacity);
+                if (className.ToString() != "UnityWndClass")
+                    return true;
+                if (!IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER) != IntPtr.Zero)
+                    return true;
+
+                found = hwnd;
+                return false;
+            }, IntPtr.Zero);
+            return found;
+        }
+
+        private const uint GW_OWNER = 4;
+
+        private delegate bool EnumThreadWindowsProc(IntPtr hwnd, IntPtr param);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumThreadWindows(uint threadId, EnumThreadWindowsProc callback, IntPtr param);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetClassName(IntPtr hwnd, StringBuilder className, int maxCount);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hwnd);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetWindow(IntPtr hwnd, uint command);
         private static string getWebLinkHost()
         {
             Uri backendUri;

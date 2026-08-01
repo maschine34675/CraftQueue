@@ -60,10 +60,19 @@ namespace CraftQueue.Server
   .active .entry-name,.active .entry-time { color:var(--green); }
   .item-icon { width:42px; height:42px; flex:0 0 42px; border-radius:4px; background:var(--surface2); object-fit:contain; }
   .item-icon.small { width:22px; height:22px; flex-basis:22px; }
-  .category { margin:15px 0 6px; color:var(--muted); font-size:.8rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+  .category { display:flex; align-items:center; gap:7px; margin:9px 0 4px; padding:6px 9px; border-radius:5px; color:var(--muted); font-size:.8rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; cursor:pointer; user-select:none; }
+  .category:hover { background:var(--surface); color:var(--text); }
+  .category .caret { width:13px; color:var(--accent); font-size:.72rem; }
+  .category .count { color:var(--muted); font-weight:400; }
+  .recipes-toolbar { margin:4px 0 2px; gap:16px; }
+  .recipes-toolbar label { display:flex; align-items:center; gap:7px; }
+  .recipes-toolbar select { padding:5px 9px; font-size:.8rem; }
   .reqs { display:flex; flex-wrap:wrap; gap:5px; margin-top:5px; }
   .req { display:flex; align-items:center; gap:4px; padding:2px 6px; border-radius:4px; background:var(--bg); color:var(--muted); font-size:.69rem; }
   .req.tool { border:1px dashed var(--border); }
+  .req.missing { color:var(--red); border:1px solid rgba(192,111,111,.55); }
+  .entry.unavailable { opacity:.45; }
+  .entry.unavailable:hover { opacity:.75; }
   .badge { display:inline-block; margin-left:5px; padding:1px 5px; border-radius:3px; background:var(--surface2); color:var(--muted); font-size:.67rem; text-transform:uppercase; }
   .empty { padding:13px; color:var(--muted); font-style:italic; }
   .recipe-loading { display:flex; align-items:center; gap:17px; margin:12px 0; padding:20px 22px; border:2px solid var(--accent); border-radius:8px; background:linear-gradient(135deg,rgba(194,173,109,.18),var(--surface)); box-shadow:0 0 24px rgba(194,173,109,.12); }
@@ -100,6 +109,20 @@ namespace CraftQueue.Server
 <div id="commandSection"></div>
 
 <h2>Available Recipes</h2>
+<div class="toolbar recipes-toolbar">
+  <label class="muted">Group by
+    <select id="groupMode" aria-label="Group recipes by">
+      <option value="category">Category</option>
+      <option value="station">Station</option>
+    </select>
+  </label>
+  <label class="muted">Sort by
+    <select id="sortMode" aria-label="Sort recipes by">
+      <option value="name">Name</option>
+      <option value="time">Craft time</option>
+    </select>
+  </label>
+</div>
 <input id="search" type="search" placeholder="Search by product, requirement, category or station…" disabled>
 <div id="recipeLoading" class="recipe-loading" role="status" aria-live="polite">
   <div id="loadingSpinner" class="spinner" aria-hidden="true"></div>
@@ -244,11 +267,19 @@ function activateIcons(root=document){
   });
 }
 
-function requirementsHtml(requirements){
+function requirementsHtml(requirements,have){
   if(!requirements?.length)return '';
-  return `<div class="reqs">${requirements.map(req=>
-    `<span class="req${req.isTool?' tool':''}">${iconHtml(req.templateId,'item-icon small')}${req.isTool?'🔧 ':''}${esc(req.name)} ×${req.count}</span>`
-  ).join('')}</div>`;
+  return `<div class="reqs">${requirements.map((req,index)=>{
+    const known=Array.isArray(have)&&typeof have[index]==='number';
+    const short=known&&have[index]<req.count;
+    const amount=known?`${have[index]}/${req.count}`:`×${req.count}`;
+    return `<span class="req${req.isTool?' tool':''}${short?' missing':''}">${iconHtml(req.templateId,'item-icon small')}${req.isTool?'🔧 ':''}${esc(req.name)} ${amount}</span>`;
+  }).join('')}</div>`;
+}
+
+function isCraftable(recipe,have){
+  if(!Array.isArray(have))return true;
+  return (recipe.requirements||[]).every((req,index)=>(have[index]??0)>=req.count);
 }
 
 function renderClientBanner(){
@@ -339,10 +370,30 @@ function renderCommands(){
         <div class="entry-meta">Delivery attempts ${command.deliveryCount||0}</div>
         ${command.error?`<div class="entry-error">${esc(command.error)}</div>`:''}
       </div>
+      ${command.status==='Completed'?`<button class="btn btn-refresh" type="button" data-action="dismiss-command" data-id="${esc(command.commandId)}">Dismiss</button>`:''}
     </div>`;
   }
   root.innerHTML=html;
   activateIcons(root);
+}
+
+let groupMode=localStorage.getItem('craftqueue-group')||'category';
+let sortMode=localStorage.getItem('craftqueue-sort')||'name';
+let expandedGroups=new Set(JSON.parse(localStorage.getItem('craftqueue-expanded')||'[]'));
+
+function toggleGroup(name){
+  if($('search').value.trim())return;
+  if(expandedGroups.has(name))expandedGroups.delete(name);
+  else expandedGroups.add(name);
+  localStorage.setItem('craftqueue-expanded',JSON.stringify([...expandedGroups]));
+  renderRecipes();
+}
+
+function matchesFilter(recipe,category,filter){
+  return recipe.productName.toLowerCase().includes(filter)||
+    category.toLowerCase().includes(filter)||
+    areaName(recipe.areaType).toLowerCase().includes(filter)||
+    (recipe.requirements||[]).some(req=>req.name.toLowerCase().includes(filter));
 }
 
 function renderRecipes(){
@@ -353,29 +404,50 @@ function renderRecipes(){
     return;
   }
   const available=new Set(state.availableRecipeIds||[]);
+  const availability=state.materialAvailability||{};
   const filter=$('search').value.trim().toLowerCase();
+  const searching=filter.length>0;
   const craftDisabled=(state.clientOnline||state.raidAutomationActive)
     ?''
     :' disabled title="EFT must be connected to queue a craft."';
+
+  const groups=new Map();
+  for(const [category,list] of Object.entries(recipes)){
+    for(const recipe of list){
+      if(!available.has(recipe.recipeId))continue;
+      if(searching&&!matchesFilter(recipe,category,filter))continue;
+      const name=groupMode==='station'?areaName(recipe.areaType):category;
+      if(!groups.has(name))groups.set(name,[]);
+      groups.get(name).push(recipe);
+    }
+  }
+
   let html='';
-  for(const [category,list] of Object.entries(recipes).sort((a,b)=>a[0].localeCompare(b[0]))){
-    const filtered=list.filter(recipe=>available.has(recipe.recipeId)&&(
-      recipe.productName.toLowerCase().includes(filter)||
-      category.toLowerCase().includes(filter)||
-      areaName(recipe.areaType).toLowerCase().includes(filter)||
-      (recipe.requirements||[]).some(req=>req.name.toLowerCase().includes(filter))
-    ));
-    if(!filtered.length)continue;
-    html+=`<div class="category">${esc(category)} (${filtered.length})</div>`;
-    for(const recipe of filtered){
-      html+=`<div class="entry">
+  for(const [name,items] of [...groups.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
+    items.sort(sortMode==='time'
+      ?(a,b)=>(a.productionTime-b.productionTime)||a.productName.localeCompare(b.productName)
+      :(a,b)=>a.productName.localeCompare(b.productName));
+    const craftableCount=items.filter(recipe=>isCraftable(recipe,availability[recipe.recipeId])).length;
+    const countLabel=state.materialAvailability
+      ?`(${craftableCount}/${items.length} craftable)`
+      :`(${items.length})`;
+    const open=searching||expandedGroups.has(name);
+    html+=`<div class="category" data-toggle-group="${esc(name)}" role="button" tabindex="0" aria-expanded="${open}">
+      <span class="caret" aria-hidden="true">${open?'▾':'▸'}</span>${esc(name)} <span class="count">${countLabel}</span>
+    </div>`;
+    if(!open)continue;
+    for(const recipe of items){
+      const have=availability[recipe.recipeId];
+      const craftable=isCraftable(recipe,have);
+      const disabled=craftDisabled||(craftable?'':' disabled title="Not enough materials in the stash."');
+      html+=`<div class="entry${craftable?'':' unavailable'}">
         ${iconHtml(recipe.endProduct)}
         <div class="entry-info">
           <div class="entry-name">${esc(recipe.productName)}</div>
           <div class="entry-meta">${esc(areaName(recipe.areaType))} · ${fmt(recipe.productionTime)}</div>
-          ${requirementsHtml(recipe.requirements)}
+          ${requirementsHtml(recipe.requirements,have)}
         </div>
-        <button class="btn btn-craft" type="button" data-action="enqueue" data-id="${esc(recipe.recipeId)}"${craftDisabled}>Craft</button>
+        <button class="btn btn-craft" type="button" data-action="enqueue" data-id="${esc(recipe.recipeId)}"${disabled}>Craft</button>
       </div>`;
     }
   }
@@ -412,6 +484,10 @@ async function performAction(button){
       pendingActionCommandId='';
       result=await api('/api/queue/retry','POST',{profileId:profileId(),queueId:button.dataset.id});
       showAction(result.success?'Queue entry is ready to retry.':result.error,!result.success,result.success?5000:0);
+    }else if(action==='dismiss-command'){
+      if(pendingActionCommandId===button.dataset.id)pendingActionCommandId='';
+      result=await api('/api/commands/dismiss','POST',{profileId:profileId(),commandId:button.dataset.id});
+      showAction(result.success?'':result.error,!result.success);
     }
     await new Promise(resolve=>setTimeout(resolve,250));
     await refresh();
@@ -423,12 +499,31 @@ async function performAction(button){
 }
 
 document.addEventListener('click',event=>{
+  const group=event.target.closest('[data-toggle-group]');
+  if(group){toggleGroup(group.dataset.toggleGroup);return;}
   const button=event.target.closest('button[data-action]');
   if(button)void performAction(button);
+});
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Enter'&&event.key!==' ')return;
+  const group=event.target.closest?event.target.closest('[data-toggle-group]'):null;
+  if(group){event.preventDefault();toggleGroup(group.dataset.toggleGroup);}
 });
 $('refreshButton').addEventListener('click',()=>void refresh());
 $('profileSelect').addEventListener('change',()=>{pendingActionCommandId='';showAction('');void refresh();});
 $('search').addEventListener('input',renderRecipes);
+$('groupMode').value=groupMode;
+$('groupMode').addEventListener('change',()=>{
+  groupMode=$('groupMode').value;
+  localStorage.setItem('craftqueue-group',groupMode);
+  renderRecipes();
+});
+$('sortMode').value=sortMode;
+$('sortMode').addEventListener('change',()=>{
+  sortMode=$('sortMode').value;
+  localStorage.setItem('craftqueue-sort',sortMode);
+  renderRecipes();
+});
 
 setInterval(()=>{
   const elapsed=Math.floor((Date.now()-stateReceivedAt)/1000);

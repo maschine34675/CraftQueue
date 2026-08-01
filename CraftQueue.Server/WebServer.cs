@@ -225,6 +225,18 @@ namespace CraftQueue.Server
                 await writeJson(context, craftQueueService.CreateCancelActiveCommand(sessionId, request.RecipeId, request.InstanceId ?? ""));
             });
 
+            webApplication.MapPost("/api/commands/dismiss", async context =>
+            {
+                CommandRequest request = await readJson<CommandRequest>(context);
+                if (!tryGetProfile(context, request.ProfileId, out MongoId sessionId))
+                {
+                    await writeText(context, StatusCodes.Status404NotFound, "Profile not found.");
+                    return;
+                }
+
+                await writeJson(context, craftQueueService.DismissCommand(sessionId, request.CommandId));
+            });
+
             webApplication.MapPost("/api/queue/cancel", async context =>
             {
                 QueueEntryRequest request = await readJson<QueueEntryRequest>(context);
@@ -453,6 +465,12 @@ namespace CraftQueue.Server
         {
             public string? ProfileId { get; set; }
             public string QueueId { get; set; } = "";
+        }
+
+        private sealed class CommandRequest
+        {
+            public string? ProfileId { get; set; }
+            public string CommandId { get; set; } = "";
         }
     }
 }

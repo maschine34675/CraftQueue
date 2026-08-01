@@ -442,6 +442,23 @@ namespace CraftQueue.Server
                 return changed;
             }
         }
+        public QueueOperationResult DismissCommand(MongoId sessionId, string commandId)
+        {
+            if (string.IsNullOrWhiteSpace(commandId))
+                return QueueOperationResult.Fail("Missing command id.");
+
+            SessionRuntime runtime = getRuntime(sessionId);
+            lock (runtime.Sync)
+            {
+                if (!runtime.Commands.TryGetValue(commandId, out ClientCommand? command))
+                    return QueueOperationResult.Ok();
+                if (command.Status != ClientCommandStatus.Completed)
+                    return QueueOperationResult.Fail("This command is still being delivered to EFT.");
+
+                runtime.Commands.Remove(commandId);
+                return QueueOperationResult.Ok();
+            }
+        }
 
         public QueueOperationResult CancelQueued(MongoId sessionId, string queueId)
         {
@@ -542,6 +559,7 @@ namespace CraftQueue.Server
                     RaidAutomationActive = runtime.InRaid,
                     ProfileView = profileView,
                     RecipeListAvailable = recipesKnown,
+                    MaterialAvailability = GetMaterialAvailability(sessionId),
                     ActiveProductions = active,
                     AvailableRecipeIds = availableRecipeIds,
                     QueueEntries = createQueueView(data),
@@ -552,6 +570,40 @@ namespace CraftQueue.Server
                         .Select(copyCommand)
                         .ToList()
                 };
+            }
+        }
+        public Dictionary<string, List<int>> GetMaterialAvailability(MongoId sessionId)
+        {
+            try
+            {
+                PmcData pmcData = getPmcData(sessionId);
+                _ = GetRecipes();
+                Dictionary<string, HideoutProduction> lookup;
+                lock (recipeCacheLock)
+                    lookup = cachedProductionLookup == null
+                        ? new Dictionary<string, HideoutProduction>(StringComparer.Ordinal)
+                        : new Dictionary<string, HideoutProduction>(cachedProductionLookup, StringComparer.Ordinal);
+
+                ServerInventorySnapshot snapshot = createInventorySnapshot(pmcData);
+                var result = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+                foreach ((string recipeId, HideoutProduction recipe) in lookup)
+                {
+                    var counts = new List<int>();
+                    foreach (Requirement requirement in recipe.Requirements ?? [])
+                    {
+                        if ((requirement.Type != "Item" && requirement.Type != "Tool") || !requirement.TemplateId.HasValue)
+                            continue;
+                        counts.Add(getSuitableItems(snapshot, requirement).Sum(stackCount));
+                    }
+                    result[recipeId] = counts;
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[CraftQueue] Material availability for {ProfileId} could not be computed.", sessionId);
+                return [];
             }
         }
 
@@ -1962,6 +2014,7 @@ namespace CraftQueue.Server
         public bool RaidAutomationActive { get; set; }
         public bool ProfileView { get; set; }
         public bool RecipeListAvailable { get; set; }
+        public Dictionary<string, List<int>> MaterialAvailability { get; set; } = [];
         public List<ActiveProductionView> ActiveProductions { get; set; } = [];
         public List<string> AvailableRecipeIds { get; set; } = [];
         public List<QueueEntryView> QueueEntries { get; set; } = [];

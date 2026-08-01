@@ -69,6 +69,11 @@ New-Item -ItemType Directory -Path $clientDirectory, $serverDirectory, $configDi
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "CraftQueue.Client\bin\$Configuration\maschine-CraftQueue.Client.dll") -Destination $clientDirectory
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "CraftQueue.Server\bin\$Configuration\maschine-CraftQueue.Server.dll") -Destination $serverDirectory
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "CraftQueue.Server\config\config.json") -Destination $configDirectory
+# The in-game overlay loads this natively from the plugin folder; without it
+# the mod silently falls back to the external browser.
+Copy-Item -LiteralPath (Join-Path $repositoryRoot "CraftQueue.Client\ThirdParty\WebView2\WebView2Loader.dll") -Destination $clientDirectory
+Copy-Item -LiteralPath (Join-Path $repositoryRoot "CraftQueue.Client\ThirdParty\WebView2\WebView2-LICENSE.txt") -Destination $stageRoot
+Copy-Item -LiteralPath (Join-Path $repositoryRoot "CraftQueue.Client\ThirdParty\WebView2\WebView2-NOTICE.txt") -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "README.md") -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "LICENSE") -Destination $stageRoot
 

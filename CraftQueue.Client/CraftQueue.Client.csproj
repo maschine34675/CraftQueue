@@ -11,9 +11,9 @@
     <AssemblyName>maschine-CraftQueue.Client</AssemblyName>
     <Company>https://github.com/maschine34675/CraftQueue</Company>
     <Authors>maschine</Authors>
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0</AssemblyVersion>
-    <FileVersion>1.0.0</FileVersion>
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0</AssemblyVersion>
+    <FileVersion>1.1.0</FileVersion>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <LangVersion>latest</LangVersion>
     <FileAlignment>512</FileAlignment>
@@ -118,6 +118,8 @@
       <Link>CraftQueueProtocol.cs</Link>
     </Compile>
     <Compile Include="Plugin.cs" />
+    <Compile Include="UI\WebOverlay.cs" />
+    <Compile Include="UI\RawWebView.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup />
@@ -126,6 +128,7 @@
     <Error Condition="'$(SptRoot)' == ''" Text="Set SptRoot when DeployToSpt=true." />
     <MakeDir Directories="$(SptRoot)\BepInEx\plugins" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SptRoot)\BepInEx\plugins" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="ThirdParty\WebView2\WebView2Loader.dll" DestinationFolder="$(SptRoot)\BepInEx\plugins" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(SptRoot)\BepInEx\plugins" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
   </Target>
 </Project>

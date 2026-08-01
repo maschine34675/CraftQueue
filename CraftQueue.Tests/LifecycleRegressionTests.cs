@@ -86,6 +86,41 @@ public sealed class LifecycleRegressionTests
     }
 
     [Fact]
+    public void WebUiGreysOutRecipesWithoutMaterials()
+    {
+        string html = WebUI.BuildHtml("test-token");
+
+        Assert.Contains("state.materialAvailability", html);
+        Assert.Contains("entry${craftable?'':' unavailable'}", html);
+        Assert.Contains("Not enough materials in the stash.", html);
+        Assert.Contains("if(!Array.isArray(have))return true;", html);
+        Assert.Contains("${have[index]}/${req.count}", html);
+    }
+
+    [Fact]
+    public void WebUiFailedCommandsCanBeDismissed()
+    {
+        string html = WebUI.BuildHtml("test-token");
+
+        Assert.Contains("data-action=\"dismiss-command\"", html);
+        Assert.Contains("/api/commands/dismiss", html);
+        Assert.Contains("command.status==='Completed'?`<button", html);
+    }
+
+    [Fact]
+    public void WebUiRecipeBrowserGroupsCollapseAndRegroup()
+    {
+        string html = WebUI.BuildHtml("test-token");
+
+        Assert.Contains("id=\"groupMode\"", html);
+        Assert.Contains("value=\"station\"", html);
+        Assert.Contains("id=\"sortMode\"", html);
+        Assert.Contains("data-toggle-group", html);
+        Assert.Contains("searching||expandedGroups.has(name)", html);
+        Assert.Contains("localStorage.getItem('craftqueue-expanded')", html);
+    }
+
+    [Fact]
     public void WebUiShowsAPausedCraftInsteadOfCountingItDown()
     {
         string html = WebUI.BuildHtml("test-token");
