@@ -11,9 +11,9 @@
     <AssemblyName>maschine-CraftQueue.Client</AssemblyName>
     <Company>https://github.com/maschine34675/CraftQueue</Company>
     <Authors>maschine</Authors>
-    <Version>1.1.0</Version>
-    <AssemblyVersion>1.1.0</AssemblyVersion>
-    <FileVersion>1.1.0</FileVersion>
+    <Version>1.2.0</Version>
+    <AssemblyVersion>1.2.0</AssemblyVersion>
+    <FileVersion>1.2.0</FileVersion>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <LangVersion>latest</LangVersion>
     <FileAlignment>512</FileAlignment>
@@ -81,6 +81,9 @@
     <Reference Include="UnityEngine.InputLegacyModule">
       <HintPath>Libraries\EscapeFromTarkov_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
     </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>Libraries\EscapeFromTarkov_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+    </Reference>
     <Reference Include="Comfort, Version=1.0.0.4, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>Libraries\EscapeFromTarkov_Data\Managed\Comfort.dll</HintPath>
@@ -91,6 +94,10 @@
     </Reference>
     <Reference Include="0Harmony">
       <HintPath>Libraries\BepInEx\core\0Harmony.dll</HintPath>
+    </Reference>
+    <Reference Include="Anvil-WebOverlay">
+      <HintPath>..\..\WebOverlay\WebOverlay\bin\Release\Anvil-WebOverlay.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="BepInEx">
       <HintPath>Libraries\BepInEx\core\BepInEx.dll</HintPath>
@@ -118,8 +125,8 @@
       <Link>CraftQueueProtocol.cs</Link>
     </Compile>
     <Compile Include="Plugin.cs" />
-    <Compile Include="UI\WebOverlay.cs" />
-    <Compile Include="UI\RawWebView.cs" />
+    <Compile Include="Patches\TaskBarButtonPatch.cs" />
+    <Compile Include="UI\WebOverlayGate.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup />
@@ -128,7 +135,6 @@
     <Error Condition="'$(SptRoot)' == ''" Text="Set SptRoot when DeployToSpt=true." />
     <MakeDir Directories="$(SptRoot)\BepInEx\plugins" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SptRoot)\BepInEx\plugins" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="ThirdParty\WebView2\WebView2Loader.dll" DestinationFolder="$(SptRoot)\BepInEx\plugins" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(SptRoot)\BepInEx\plugins" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
   </Target>
 </Project>

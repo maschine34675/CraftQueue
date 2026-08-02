@@ -5,6 +5,7 @@ obj/
 *.user
 CraftQueue.Client/Libraries/
 CraftQueue.Server/SPT/
+CraftQueue.Client/SPT/
 artifacts/
 TestResults/
 *.zip

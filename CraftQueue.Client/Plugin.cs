@@ -13,7 +13,6 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,6 +21,7 @@ using UnityEngine;
 namespace CraftQueue
 {
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
+    [BepInDependency(CraftQueue.UI.WebOverlayGate.LibraryGuid, BepInDependency.DependencyFlags.SoftDependency)]
     public class Plugin : BaseUnityPlugin
     {
         public const string PluginGuid = CraftQueueProtocol.ModGuid;
@@ -47,30 +47,98 @@ namespace CraftQueue
         private float nextChannelInfoRetry;
         private bool usingBackendFallback;
         private bool processing;
+        private bool overlayHintLogged;
 
         private ConfigEntry<KeyboardShortcut> openWebInterfaceKey;
+        private ConfigEntry<KeyboardShortcut> openInBrowserKey;
         private ConfigEntry<bool> useOverlay;
-        private CraftQueue.UI.WebOverlay overlay;
+        private ConfigEntry<bool> showOverlayFrame;
+        private ConfigEntry<bool> showTaskBarButton;
+
+        internal static Plugin Instance { get; private set; }
+
+        internal bool ShowTaskBarButton => this.showTaskBarButton.Value;
+        internal void OpenWebInterfaceFromTaskBar()
+        {
+            this.openWebInterface(false);
+        }
+
+        internal void LogTaskBarButtonFailure(Exception ex)
+        {
+            this.Logger.LogWarning("the task bar button could not be added ("
+                + ex.GetType().Name + ": " + ex.Message + ").");
+        }
+
+        internal void LogTaskBarButtonDiagnostic(string message)
+        {
+            this.Logger.LogDebug("task bar button: " + message);
+        }
+        internal void RunDelayed(float seconds, Action action)
+        {
+            this.StartCoroutine(runDelayed(seconds, action));
+        }
+
+        private static System.Collections.IEnumerator runDelayed(float seconds, Action action)
+        {
+            yield return new WaitForSeconds(seconds);
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                CraftQueue.Plugin.Instance?.Logger.LogWarning("a delayed UI action failed ("
+                    + ex.GetType().Name + ": " + ex.Message + ").");
+            }
+        }
 
         private void Awake()
         {
+            Instance = this;
             this.clientApiHosts = getClientApiHosts();
             this.openWebInterfaceKey = this.Config.Bind(
                 "Web Interface",
                 "Open in browser",
                 new KeyboardShortcut(KeyCode.F9),
-                "Opens your personal CraftQueue web interface. Hold Shift to force the external browser.");
+                "Opens your personal CraftQueue web interface.");
+            this.openInBrowserKey = this.Config.Bind(
+                "Web Interface",
+                "Open in external browser",
+                new KeyboardShortcut(KeyCode.F9, KeyCode.LeftShift),
+                "Opens the web interface in the external browser even when the overlay is enabled.");
             this.useOverlay = this.Config.Bind(
                 "Web Interface",
                 "Show as in-game overlay",
                 true,
                 "Show the web interface in a window over the game instead of the external browser. Needs the WebView2 runtime, which current Windows installs ship with; without it the browser is used.");
+            this.showOverlayFrame = this.Config.Bind(
+                "Web Interface",
+                "Show window title bar",
+                true,
+                "Draw a title bar on the overlay window. Without it the window cannot be moved or resized and closes only via F9 or Escape. Takes effect when the overlay is next created (usually the next game start).");
+            this.showTaskBarButton = this.Config.Bind(
+                "Web Interface",
+                "Show menu bar button",
+                true,
+                "Add a CRAFT QUEUE button to the bottom menu bar, next to HIDEOUT. Takes effect when the menu is next rebuilt (usually the next game start).");
+
+            try
+            {
+                new CraftQueue.Patches.TaskBarButtonPatch().Enable();
+            }
+            catch (Exception ex)
+            {
+                this.Logger.LogWarning("the task bar button patch could not be enabled ("
+                    + ex.GetType().Name + "). The hotkey still works.");
+            }
         }
 
         private void Update()
         {
-            if (this.openWebInterfaceKey.Value.IsDown())
-                this.openWebInterface();
+            if (this.openInBrowserKey.Value.IsDown())
+                this.openWebInterface(true);
+            else if (this.openWebInterfaceKey.Value.IsDown())
+                this.openWebInterface(false);
 
             if (this.processing || Time.time < this.nextPoll)
                 return;
@@ -122,7 +190,7 @@ namespace CraftQueue
                 if (Time.realtimeSinceStartup >= this.nextErrorLog)
                 {
                     this.nextErrorLog = Time.realtimeSinceStartup + 30f;
-                    this.Logger.LogError("CraftQueue executor: " + ex);
+                    this.Logger.LogError("executor: " + ex);
                 }
             }
             finally
@@ -176,7 +244,7 @@ namespace CraftQueue
             }
             catch (Exception ex)
             {
-                this.Logger.LogWarning("CraftQueue: could not release the claim for " + claim.recipeId + " (" + ex.Message + ").");
+                this.Logger.LogWarning("could not release the claim for " + claim.recipeId + " (" + ex.Message + ").");
             }
         }
 
@@ -243,7 +311,7 @@ namespace CraftQueue
 
             bool accepted = await this.ack(claim.queueId, true, null, null);
             if (!accepted)
-                this.Logger.LogWarning("CraftQueue: the server did not accept the start acknowledgement for " + claim.recipeId + ".");
+                this.Logger.LogWarning("the server did not accept the start acknowledgement for " + claim.recipeId + ".");
         }
 
         private async Task processCommands(
@@ -403,7 +471,7 @@ namespace CraftQueue
                         string response = await postClientApi(host, this.channelInfo.port, this.channelInfo.token, webPath, payload);
                         this.preferredClientApiHost = host;
                         if (this.usingBackendFallback)
-                            this.Logger.LogInfo("CraftQueue: local web channel restored.");
+                            this.Logger.LogDebug("local web channel restored.");
                         this.usingBackendFallback = false;
                         return response;
                     }
@@ -420,7 +488,7 @@ namespace CraftQueue
 
                         this.lastRejectedToken = rejected;
                         this.nextChannelInfoRetry = 0f;
-                        this.Logger.LogInfo("CraftQueue: local web channel token expired; requesting a new one.");
+                        this.Logger.LogDebug("local web channel token expired; requesting a new one.");
                         return await postSptApi(backendPath, payload);
                     }
                     catch (Exception ex)
@@ -434,7 +502,7 @@ namespace CraftQueue
                 this.nextWebApiRetry = Time.realtimeSinceStartup + WebRetryInterval;
                 if (firstFailure && lastError != null)
                     this.Logger.LogWarning(
-                        "CraftQueue: local web channel unavailable (" + lastError.GetType().Name + ": " + lastError.Message + "); using the SPT backend fallback.");
+                        "local web channel unavailable (" + lastError.GetType().Name + ": " + lastError.Message + "); using the SPT backend fallback.");
             }
 
             return await postSptApi(backendPath, payload);
@@ -465,10 +533,10 @@ namespace CraftQueue
                 if (info == null || info.port <= 0 || string.IsNullOrEmpty(info.token))
                     throw new InvalidDataException("CraftQueue channel information was incomplete.");
                 this.channelInfo = info;
+                this.Logger.LogDebug(
+                    "local web channel targets " + string.Join(", ", this.clientApiHosts.ToArray()) + " on port " + info.port + ".");
                 this.Logger.LogInfo(
-                    "CraftQueue: local web channel targets " + string.Join(", ", this.clientApiHosts.ToArray()) + " on port " + info.port + ".");
-                this.Logger.LogInfo(
-                    "CraftQueue: your personal web interface: http://" + getWebLinkHost() + ":" + info.port + "/?token=" + Uri.EscapeDataString(info.token));
+                    "your personal web interface: http://" + getWebLinkHost() + ":" + info.port + "/?token=" + Uri.EscapeDataString(info.token));
             }
             catch (Exception ex)
             {
@@ -476,7 +544,7 @@ namespace CraftQueue
                 if (Time.realtimeSinceStartup >= this.nextErrorLog)
                 {
                     this.nextErrorLog = Time.realtimeSinceStartup + 30f;
-                    this.Logger.LogWarning("CraftQueue: could not obtain local channel information; backend fallback remains active (" + ex.Message + ").");
+                    this.Logger.LogWarning("could not obtain local channel information; backend fallback remains active (" + ex.Message + ").");
                 }
             }
         }
@@ -533,7 +601,7 @@ namespace CraftQueue
                     catch (Exception ex)
                     {
                         this.collectRetryAt[areaRetryKey] = Time.realtimeSinceStartup + CollectRetryInterval;
-                        this.Logger.LogWarning("CraftQueue: collecting a completed production will retry in 60 seconds (" + ex.Message + ").");
+                        this.Logger.LogWarning("collecting a completed production will retry in 60 seconds (" + ex.Message + ").");
                     }
                 }
             }
@@ -1074,14 +1142,14 @@ namespace CraftQueue
             }
         }
 
-        private void openWebInterface()
+        private void openWebInterface(bool forceBrowser)
         {
             ClientChannelInfo info = this.channelInfo;
             if (info == null)
             {
                 this.nextChannelInfoRetry = 0f;
                 _ = this.ensureChannelInfo();
-                this.Logger.LogWarning("CraftQueue: the web link is not available yet; the server has not answered.");
+                this.Logger.LogWarning("the web link is not available yet; the server has not answered.");
                 try
                 {
                     NotificationManagerClass.DisplayMessageNotification(
@@ -1096,84 +1164,87 @@ namespace CraftQueue
             string url = "http://" + getWebLinkHost() + ":" + info.port + "/?token=" + Uri.EscapeDataString(info.token);
             string safeUrl = url.Substring(0, url.IndexOf("?token=", StringComparison.Ordinal));
 
-            if (this.tryToggleOverlay(url))
+            if (!forceBrowser && this.tryToggleOverlay(url))
             {
-                this.Logger.LogInfo("CraftQueue: toggled the in-game overlay for " + safeUrl + ".");
+                this.Logger.LogDebug("toggled the in-game overlay for " + safeUrl + ".");
                 return;
             }
 
-            this.Logger.LogInfo("CraftQueue: opening " + safeUrl + " in the default browser.");
+            this.Logger.LogDebug("opening " + safeUrl + " in the default browser.");
             Application.OpenURL(url);
         }
         private bool tryToggleOverlay(string url)
         {
             if (!this.useOverlay.Value)
                 return false;
-            if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
-                return false;
 
             if (Screen.fullScreenMode == FullScreenMode.ExclusiveFullScreen)
             {
-                this.Logger.LogInfo("CraftQueue: exclusive fullscreen cannot host the overlay; using the browser.");
+                this.Logger.LogInfo("exclusive fullscreen cannot host the overlay; using the browser.");
                 return false;
             }
 
-            if (this.overlay == null)
-                this.overlay = new CraftQueue.UI.WebOverlay(this.Logger.LogInfo, this.Logger.LogWarning);
-            if (this.overlay.Failed)
-                return false;
-
-            IntPtr gameWindow = findGameWindow();
-            if (gameWindow == IntPtr.Zero)
+            if (!CraftQueue.UI.WebOverlayGate.IsLoaded)
             {
-                this.Logger.LogWarning("CraftQueue: the game window was not found; using the browser.");
+                if (!this.overlayHintLogged)
+                {
+                    this.overlayHintLogged = true;
+                    this.Logger.LogInfo("install the Anvil-WebOverlay library for the in-game overlay; using the browser.");
+                }
                 return false;
             }
 
-            return this.overlay.Toggle(url, gameWindow);
+            bool toggled = CraftQueue.UI.WebOverlayGate.Toggle(
+                url, this.showOverlayFrame.Value, closeKeysForOverlay(), this.Logger.LogWarning, out bool starting);
+            if (starting)
+            {
+                try
+                {
+                    NotificationManagerClass.DisplayMessageNotification(
+                        "the overlay is starting - one moment...");
+                }
+                catch
+                {
+                }
+            }
+
+            return toggled;
+        }
+        private int[] closeKeysForOverlay()
+        {
+            const int Escape = 0x1B;
+            int mapped = toVirtualKey(this.openWebInterfaceKey.Value.MainKey);
+            return mapped == 0 || mapped == Escape ? new[] { Escape } : new[] { Escape, mapped };
+        }
+
+        private static int toVirtualKey(KeyCode key)
+        {
+            if (key >= KeyCode.F1 && key <= KeyCode.F15)
+                return 0x70 + (key - KeyCode.F1);
+            if (key >= KeyCode.A && key <= KeyCode.Z)
+                return 'A' + (key - KeyCode.A);
+            if (key >= KeyCode.Alpha0 && key <= KeyCode.Alpha9)
+                return '0' + (key - KeyCode.Alpha0);
+            switch (key)
+            {
+                case KeyCode.Escape: return 0x1B;
+                case KeyCode.Tab: return 0x09;
+                case KeyCode.Home: return 0x24;
+                case KeyCode.End: return 0x23;
+                case KeyCode.Insert: return 0x2D;
+                case KeyCode.Delete: return 0x2E;
+                case KeyCode.PageUp: return 0x21;
+                case KeyCode.PageDown: return 0x22;
+                case KeyCode.Pause: return 0x13;
+                default: return 0;
+            }
         }
 
         private void OnDestroy()
         {
-            this.overlay?.Shutdown();
+            if (CraftQueue.UI.WebOverlayGate.IsLoaded)
+                CraftQueue.UI.WebOverlayGate.Shutdown();
         }
-
-        private static IntPtr findGameWindow()
-        {
-            IntPtr found = IntPtr.Zero;
-            EnumThreadWindows(GetCurrentThreadId(), (hwnd, param) =>
-            {
-                var className = new StringBuilder(256);
-                GetClassName(hwnd, className, className.Capacity);
-                if (className.ToString() != "UnityWndClass")
-                    return true;
-                if (!IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER) != IntPtr.Zero)
-                    return true;
-
-                found = hwnd;
-                return false;
-            }, IntPtr.Zero);
-            return found;
-        }
-
-        private const uint GW_OWNER = 4;
-
-        private delegate bool EnumThreadWindowsProc(IntPtr hwnd, IntPtr param);
-
-        [DllImport("kernel32.dll")]
-        private static extern uint GetCurrentThreadId();
-
-        [DllImport("user32.dll")]
-        private static extern bool EnumThreadWindows(uint threadId, EnumThreadWindowsProc callback, IntPtr param);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        private static extern int GetClassName(IntPtr hwnd, StringBuilder className, int maxCount);
-
-        [DllImport("user32.dll")]
-        private static extern bool IsWindowVisible(IntPtr hwnd);
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetWindow(IntPtr hwnd, uint command);
         private static string getWebLinkHost()
         {
             Uri backendUri;

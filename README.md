@@ -78,13 +78,9 @@ Access is protected by two kinds of tokens:
 - The **host link** printed in the server console grants full access to every profile - keep it private.
 - Each EFT client receives a **personal link** in its BepInEx log (`your personal web interface: ...`). That link only ever sees and controls its own profile, so on a co-op server every player can be given their own link safely.
 
-Press **F9** in game to open your personal interface. By default it appears as a window over the game; hold **Shift+F9** to open it in the external browser instead. Close the overlay with **F9** or **Escape** while it is focused, with its close button, or by clicking back into the game and pressing F9 again. The window can be moved and resized like any other. Both the key and the overlay can be changed in the BepInEx configuration (`Web Interface`). Tokens are minted per server start; the F9 key and the logs always carry the current link.
+Press **F9** in game to open your personal interface, or click the **CRAFT QUEUE** button in the bottom menu bar next to HIDEOUT (removable via `Show menu bar button`). By default the interface appears as a window over the game; **left Shift+F9** opens it in the external browser instead (its own configurable shortcut). Close the overlay with **F9** or **Escape** while it is focused, with its close button, or by clicking back into the game and pressing F9 again. The window can be moved and resized like any other, and its title bar can be turned off entirely (`Show window title bar`). All keys and the overlay behaviour live in the BepInEx configuration (`Web Interface`). Tokens are minted per server start; the F9 key and the logs always carry the current link.
 
-The overlay needs the Microsoft WebView2 runtime, which current Windows 10 and 11 installations already include. Without it - or in exclusive fullscreen, where a window over the game would minimise it - CraftQueue silently uses the external browser instead. Run the game in borderless windowed mode for the overlay.
-
-## Third-party components
-
-`WebView2Loader.dll` ships with the mod and belongs to the Microsoft WebView2 SDK, licensed under BSD 3-Clause; see `WebView2-LICENSE.txt` and `WebView2-NOTICE.txt` in the archive. The WebView2 *runtime* itself is not redistributed - the mod uses the one installed on the system.
+The overlay is provided by the **[Anvil-WebOverlay](https://github.com/maschine34675/WebOverlay)** library, an optional dependency: install it alongside CraftQueue to get the in-game window. Without the library - or without the Microsoft WebView2 runtime it needs (current Windows 10 and 11 installations already include it), or in exclusive fullscreen, where a window over the game would minimise it - CraftQueue silently uses the external browser instead. Run the game in borderless windowed mode for the overlay.
 
 ## Mod compatibility
 
