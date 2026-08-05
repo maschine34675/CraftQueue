@@ -1,4 +1,5 @@
 {
   "allowLan": true,
-  "bindAddress": "0.0.0.0"
+  "bindAddress": "0.0.0.0",
+  "webPort": 38473
 }

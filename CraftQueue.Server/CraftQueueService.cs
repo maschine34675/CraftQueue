@@ -16,7 +16,9 @@ using SPTarkov.Server.Core.Services;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace CraftQueue.Server
 {
@@ -33,7 +35,7 @@ namespace CraftQueue.Server
     {
         private const int ClaimLeaseSeconds = 30;
         private const int StartConfirmationSeconds = 120;
-        private const int TelemetryFreshSeconds = 20;
+        private const int TelemetryFreshSeconds = 35;
         private const int AreaStartGraceSeconds = 15;
         private const int EnvironmentalRetrySeconds = 10;
         private const int MaximumFastDeferrals = 3;
@@ -165,26 +167,47 @@ namespace CraftQueue.Server
             lock (runtime.Sync)
             {
                 long now = unixNow();
+                bool needRecipeIds = false;
+                HashSet<string> availableRecipeIds;
+                if (request.AvailableRecipeIds != null)
+                {
+                    availableRecipeIds = request.AvailableRecipeIds
+                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                        .Distinct(StringComparer.Ordinal)
+                        .Take(MaximumAvailableRecipes)
+                        .ToHashSet(StringComparer.Ordinal);
+                    runtime.RecipeIdsHash = request.RecipeIdsHash;
+                }
+                else if (!string.IsNullOrEmpty(request.RecipeIdsHash)
+                    && request.RecipeIdsHash == runtime.RecipeIdsHash
+                    && runtime.Telemetry != null)
+                {
+                    availableRecipeIds = runtime.Telemetry.AvailableRecipeIds;
+                }
+                else
+                {
+                    availableRecipeIds = runtime.Telemetry?.AvailableRecipeIds ?? new HashSet<string>(StringComparer.Ordinal);
+                    needRecipeIds = true;
+                }
+
                 runtime.Telemetry = new ClientTelemetrySnapshot
                 {
                     ReceivedAt = now,
                     Productions = sanitizeProductions(request.Productions),
-                    AvailableRecipeIds = request.AvailableRecipeIds
-                        .Where(id => !string.IsNullOrWhiteSpace(id))
-                        .Distinct(StringComparer.Ordinal)
-                        .Take(MaximumAvailableRecipes)
-                        .ToHashSet(StringComparer.Ordinal)
+                    AvailableRecipeIds = availableRecipeIds
                 };
 
                 cleanupRuntime(runtime, now);
                 CraftQueueData data = craftQueueStore.Get(sessionId);
+                ensureLedgerReconciled(sessionId, runtime, data);
                 if (runtime.InRaid)
                 {
                     if (now - runtime.RaidStateChangedAt < RaidPollRecoverySeconds)
                     {
                         return new ClientPollResponse
                         {
-                            QueueEntries = createQueueView(data)
+                            QueueEntries = createQueueView(data),
+                            NeedRecipeIds = needRecipeIds
                         };
                     }
 
@@ -217,7 +240,8 @@ namespace CraftQueue.Server
                         InstanceId = command.InstanceId
                     }).ToList(),
                     QueueEntries = createQueueView(data),
-                    Claim = claim
+                    Claim = claim,
+                    NeedRecipeIds = needRecipeIds
                 };
             }
         }
@@ -291,14 +315,9 @@ namespace CraftQueue.Server
             bool confirmed = confirmStartedEntry(sessionId, recipeId, recipe);
             if (confirmed)
             {
-                try
-                {
-                    saveServer.SaveProfileAsync(sessionId).GetAwaiter().GetResult();
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "[CraftQueue] Could not persist the profile after confirming craft {RecipeId}.", recipeId);
-                }
+                SessionRuntime runtime = getRuntime(sessionId);
+                lock (runtime.Sync)
+                    requestProfileSave(sessionId, runtime);
             }
 
             return confirmed;
@@ -321,12 +340,176 @@ namespace CraftQueue.Server
 
                 long now = unixNow();
                 queue.Remove(entry);
+                addStartLedger(data, runtime, entry, recipe.AreaType, readStartTimestamp(sessionId, recipeId));
                 runtime.RecentlyConfirmedQueueIds[entry.QueueId] = now + CommandRetentionSeconds;
                 runtime.AreaStartedAt[recipe.AreaType] = now;
                 craftQueueStore.Set(sessionId);
                 logger.LogInformation("[CraftQueue] Confirmed queued craft {RecipeId} and removed queue entry {QueueId}.", recipeId, entry.QueueId);
                 return true;
             }
+        }
+        private static void addStartLedger(
+            CraftQueueData data,
+            SessionRuntime runtime,
+            QueuedProductionRequest entry,
+            int areaType,
+            long startTimestamp)
+        {
+            data.PendingStartConfirmations.Add(new PendingStartConfirmation
+            {
+                QueueId = entry.QueueId,
+                RecipeId = entry.RecipeId,
+                AreaType = areaType,
+                StartTimestamp = startTimestamp,
+                Sequence = ++runtime.ConfirmSequence,
+                ConfirmedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            });
+        }
+        private long readStartTimestamp(MongoId sessionId, string recipeId)
+        {
+            try
+            {
+                Dictionary<MongoId, Production?>? productions = getPmcData(sessionId).Hideout?.Production;
+                if (productions != null
+                    && productions.TryGetValue(new MongoId(recipeId), out Production? production)
+                    && production != null)
+                    return production.StartTimestamp ?? 0;
+            }
+            catch
+            {
+            }
+            return 0;
+        }
+        private void requestProfileSave(MongoId sessionId, SessionRuntime runtime)
+        {
+            if (runtime.ProfileSaveQueued)
+                return;
+            runtime.ProfileSaveQueued = true;
+            Task previous = runtime.ProfileSaveTask;
+            runtime.ProfileSaveTask = Task.Run(() => runProfileSave(previous, sessionId, runtime));
+        }
+
+        private async Task runProfileSave(Task previous, MongoId sessionId, SessionRuntime runtime)
+        {
+            try { await previous.ConfigureAwait(false); }
+            catch { /* logged by its own run */ }
+
+            long coveredThroughSequence;
+            lock (runtime.Sync)
+            {
+                runtime.ProfileSaveQueued = false;
+                coveredThroughSequence = runtime.ConfirmSequence;
+            }
+
+            var timer = Stopwatch.StartNew();
+            try
+            {
+                await saveServer.SaveProfileAsync(sessionId).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                int attempt;
+                lock (runtime.Sync)
+                    attempt = ++runtime.ProfileSaveFailures;
+
+                if (attempt <= 3)
+                {
+                    logger.LogWarning(ex,
+                        "[CraftQueue] Deferred profile save failed for {ProfileId} (attempt {Attempt}); retrying.",
+                        sessionId, attempt);
+                    await Task.Delay(TimeSpan.FromSeconds(5 * attempt)).ConfigureAwait(false);
+                    lock (runtime.Sync)
+                        requestProfileSave(sessionId, runtime);
+                }
+                else
+                {
+                    logger.LogError(ex,
+                        "[CraftQueue] Deferred profile save keeps failing for {ProfileId}; clearing the start ledger to avoid resurrecting finished crafts. SPT's own autosave remains responsible for the profile.",
+                        sessionId);
+                    lock (runtime.Sync)
+                    {
+                        runtime.ProfileSaveFailures = 0;
+                        CraftQueueData stale = craftQueueStore.Get(sessionId);
+                        if (stale.PendingStartConfirmations.RemoveAll(record => record.Sequence <= coveredThroughSequence) > 0)
+                            craftQueueStore.Set(sessionId);
+                    }
+                }
+                return;
+            }
+            timer.Stop();
+
+            if (timer.ElapsedMilliseconds > 1000)
+                logger.LogWarning(
+                    "[CraftQueue] Profile save took {Ms} ms for {ProfileId} - a very large (modded) profile makes every save this expensive.",
+                    timer.ElapsedMilliseconds,
+                    sessionId);
+            else
+                logger.LogDebug("[CraftQueue] Profile save took {Ms} ms for {ProfileId}.", timer.ElapsedMilliseconds, sessionId);
+
+            lock (runtime.Sync)
+            {
+                runtime.ProfileSaveFailures = 0;
+                CraftQueueData data = craftQueueStore.Get(sessionId);
+                int cleared = data.PendingStartConfirmations.RemoveAll(record => record.Sequence <= coveredThroughSequence);
+                if (cleared > 0)
+                    craftQueueStore.Set(sessionId);
+            }
+        }
+        private void ensureLedgerReconciled(MongoId sessionId, SessionRuntime runtime, CraftQueueData data)
+        {
+            if (runtime.LedgerReconciled)
+                return;
+            runtime.LedgerReconciled = true;
+            if (data.PendingStartConfirmations.Count == 0)
+                return;
+
+            Dictionary<MongoId, Production?>? productions = null;
+            try
+            {
+                productions = getPmcData(sessionId).Hideout?.Production;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[CraftQueue] Could not read the profile to reconcile the start ledger for {ProfileId}.", sessionId);
+                return;
+            }
+
+            bool changed = false;
+            foreach (PendingStartConfirmation record in data.PendingStartConfirmations.ToArray())
+            {
+                bool present = productions != null
+                    && productions.TryGetValue(new MongoId(record.RecipeId), out Production? production)
+                    && production != null;
+                if (present && record.StartTimestamp > 0)
+                {
+                    productions!.TryGetValue(new MongoId(record.RecipeId), out Production? matched);
+                    present = (matched?.StartTimestamp ?? 0) >= record.StartTimestamp;
+                }
+
+                if (!present)
+                {
+                    var restored = new QueuedProductionRequest
+                    {
+                        QueueId = record.QueueId,
+                        RecipeId = record.RecipeId,
+                        Status = QueueEntryStatus.Queued
+                    };
+                    LinkedList<QueuedProductionRequest> queue = getOrCreateQueue(data, (HideoutAreas)record.AreaType);
+                    if (!queue.Any(entry => entry.QueueId == record.QueueId))
+                    {
+                        queue.AddFirst(restored);
+                        logger.LogWarning(
+                            "[CraftQueue] Restored craft {RecipeId}: the server stopped before the profile persisted its start.",
+                            record.RecipeId);
+                    }
+                }
+
+                data.PendingStartConfirmations.Remove(record);
+                changed = true;
+            }
+
+            if (changed)
+                craftQueueStore.Set(sessionId);
         }
 
         public void SetRaidState(MongoId sessionId, bool inRaid)
@@ -420,9 +603,13 @@ namespace CraftQueue.Server
                 if (pmcData.Hideout?.Production == null || pmcData.Inventory?.Items == null)
                     return false;
 
+                CraftQueueData data = craftQueueStore.Get(sessionId);
+                ensureLedgerReconciled(sessionId, runtime, data);
+                if (!hasRaidWork(data, pmcData))
+                    return false;
+
                 hideoutHelper.UpdatePlayerHideout(sessionId);
 
-                CraftQueueData data = craftQueueStore.Get(sessionId);
                 bool changed = false;
                 if (reconcileRaidHandover(sessionId, runtime, data, pmcData, now))
                 {
@@ -432,7 +619,7 @@ namespace CraftQueue.Server
 
                 if (collectCompletedProductions(sessionId, runtime, pmcData, now))
                 {
-                    saveServer.SaveProfileAsync(sessionId).GetAwaiter().GetResult();
+                    requestProfileSave(sessionId, runtime);
                     changed = true;
                 }
 
@@ -441,6 +628,26 @@ namespace CraftQueue.Server
 
                 return changed;
             }
+        }
+        private bool hasRaidWork(CraftQueueData data, PmcData pmcData)
+        {
+            if (data.PendingStartConfirmations.Count > 0)
+                return true;
+            if (data.AreaQueues.Values.Any(queue => queue.Count > 0))
+                return true;
+
+            Dictionary<MongoId, Production?>? productions = pmcData.Hideout?.Production;
+            if (productions == null)
+                return false;
+            foreach ((MongoId productionId, Production? production) in productions)
+            {
+                if (production == null)
+                    continue;
+                HideoutProduction? recipe = getProductionRecipe(productionId.ToString());
+                if (recipe != null && recipe.Continuous != true)
+                    return true;
+            }
+            return false;
         }
         public QueueOperationResult DismissCommand(MongoId sessionId, string commandId)
         {
@@ -510,11 +717,14 @@ namespace CraftQueue.Server
         public CraftQueueState GetState(MongoId sessionId)
         {
             SessionRuntime runtime = getRuntime(sessionId);
+            CraftQueueState state;
+            HashSet<string>? availabilityScope;
             lock (runtime.Sync)
             {
                 long now = unixNow();
                 cleanupRuntime(runtime, now);
                 CraftQueueData data = craftQueueStore.Get(sessionId);
+                ensureLedgerReconciled(sessionId, runtime, data);
                 if (!runtime.InRaid && expireAmbiguousEntries(sessionId, runtime, data, now))
                     craftQueueStore.Set(sessionId);
 
@@ -553,13 +763,12 @@ namespace CraftQueue.Server
                     ? runtime.Telemetry!.AvailableRecipeIds.Order(StringComparer.Ordinal).ToList()
                     : [];
 
-                return new CraftQueueState
+                state = new CraftQueueState
                 {
                     ClientOnline = online,
                     RaidAutomationActive = runtime.InRaid,
                     ProfileView = profileView,
                     RecipeListAvailable = recipesKnown,
-                    MaterialAvailability = GetMaterialAvailability(sessionId),
                     ActiveProductions = active,
                     AvailableRecipeIds = availableRecipeIds,
                     QueueEntries = createQueueView(data),
@@ -570,9 +779,63 @@ namespace CraftQueue.Server
                         .Select(copyCommand)
                         .ToList()
                 };
+
+                availabilityScope = recipesKnown
+                    ? new HashSet<string>(runtime.Telemetry!.AvailableRecipeIds, StringComparer.Ordinal)
+                    : null;
             }
+            state.MaterialAvailability = getMaterialAvailabilityCached(sessionId, runtime, availabilityScope);
+            return state;
+        }
+
+        private Dictionary<string, List<int>> getMaterialAvailabilityCached(
+            MongoId sessionId,
+            SessionRuntime runtime,
+            HashSet<string>? scope)
+        {
+            const long CacheMilliseconds = 5000;
+            string cacheKey = scope == null
+                ? "*"
+                : scope.Count + ":" + string.Join(",", scope.Order(StringComparer.Ordinal)).GetHashCode();
+            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+            lock (runtime.Sync)
+            {
+                if (runtime.AvailabilityCache != null
+                    && runtime.AvailabilityCacheKey == cacheKey
+                    && nowMs - runtime.AvailabilityCacheAtMs < CacheMilliseconds)
+                    return runtime.AvailabilityCache;
+            }
+
+            var timer = Stopwatch.StartNew();
+            Dictionary<string, List<int>>? result = computeMaterialAvailability(sessionId, scope);
+            timer.Stop();
+
+            if (result == null)
+            {
+                lock (runtime.Sync)
+                    return runtime.AvailabilityCache ?? [];
+            }
+
+            logger.LogDebug(
+                "[CraftQueue] Material availability computed in {Ms} ms for {Count} recipes.",
+                timer.ElapsedMilliseconds,
+                result.Count);
+
+            lock (runtime.Sync)
+            {
+                runtime.AvailabilityCache = result;
+                runtime.AvailabilityCacheKey = cacheKey;
+                runtime.AvailabilityCacheAtMs = nowMs;
+            }
+
+            return result;
         }
         public Dictionary<string, List<int>> GetMaterialAvailability(MongoId sessionId)
+        {
+            return computeMaterialAvailability(sessionId, null) ?? [];
+        }
+        private Dictionary<string, List<int>>? computeMaterialAvailability(MongoId sessionId, HashSet<string>? scope)
         {
             try
             {
@@ -588,6 +851,8 @@ namespace CraftQueue.Server
                 var result = new Dictionary<string, List<int>>(StringComparer.Ordinal);
                 foreach ((string recipeId, HideoutProduction recipe) in lookup)
                 {
+                    if (scope != null && !scope.Contains(recipeId))
+                        continue;
                     var counts = new List<int>();
                     foreach (Requirement requirement in recipe.Requirements ?? [])
                     {
@@ -603,7 +868,7 @@ namespace CraftQueue.Server
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "[CraftQueue] Material availability for {ProfileId} could not be computed.", sessionId);
-                return [];
+                return null;
             }
         }
 
@@ -822,7 +1087,7 @@ namespace CraftQueue.Server
             long now)
         {
             Dictionary<string, long> activeKeys = getActiveProductionKeys(pmcData);
-            var confirmed = new List<(LinkedList<QueuedProductionRequest> Queue, QueuedProductionRequest Entry)>();
+            var confirmed = new List<(HideoutAreas Area, LinkedList<QueuedProductionRequest> Queue, QueuedProductionRequest Entry)>();
             var reset = new List<QueuedProductionRequest>();
 
             foreach ((HideoutAreas area, LinkedList<QueuedProductionRequest> queue) in data.AreaQueues)
@@ -833,24 +1098,25 @@ namespace CraftQueue.Server
                         continue;
 
                     if (activeKeys.ContainsKey(productionKey(area, entry.RecipeId)))
-                        confirmed.Add((queue, entry));
+                        confirmed.Add((area, queue, entry));
                     else
                         reset.Add(entry);
                 }
             }
 
-            if (confirmed.Count > 0)
-                saveServer.SaveProfileAsync(sessionId).GetAwaiter().GetResult();
-
-            foreach ((LinkedList<QueuedProductionRequest> queue, QueuedProductionRequest entry) in confirmed)
+            foreach ((HideoutAreas area, LinkedList<QueuedProductionRequest> queue, QueuedProductionRequest entry) in confirmed)
             {
                 queue.Remove(entry);
+                activeKeys.TryGetValue(productionKey(area, entry.RecipeId), out long startedAt);
+                addStartLedger(data, runtime, entry, (int)area, startedAt);
                 runtime.RecentlyConfirmedQueueIds[entry.QueueId] = now + CommandRetentionSeconds;
                 logger.LogInformation(
                     "[CraftQueue] Reconciled production {RecipeId} during the raid handover and removed queue entry {QueueId}.",
                     entry.RecipeId,
                     entry.QueueId);
             }
+            if (confirmed.Count > 0)
+                requestProfileSave(sessionId, runtime);
 
             foreach (QueuedProductionRequest entry in reset)
             {
@@ -1020,14 +1286,16 @@ namespace CraftQueue.Server
                     startError = ex;
                 }
 
-                bool started = pmcData.Hideout?.Production?.TryGetValue(recipe.Id, out Production? production) == true
-                    && production?.InProgress == true;
+                Production? startedProduction = null;
+                bool started = pmcData.Hideout?.Production?.TryGetValue(recipe.Id, out startedProduction) == true
+                    && startedProduction?.InProgress == true;
                 if (started)
                 {
-                    saveServer.SaveProfileAsync(sessionId).GetAwaiter().GetResult();
                     queue.Remove(entry);
+                    addStartLedger(data, runtime, entry, (int)area, startedProduction?.StartTimestamp ?? 0);
                     runtime.RecentlyConfirmedQueueIds[entry.QueueId] = now + CommandRetentionSeconds;
                     craftQueueStore.Set(sessionId);
+                    requestProfileSave(sessionId, runtime);
                     activeAreas.Add(area);
                     logger.LogInformation(
                         "[CraftQueue] Started queued production {RecipeId} in area {Area} on the server during a raid.",
@@ -1200,6 +1468,16 @@ namespace CraftQueue.Server
             return checked((int)Math.Min(int.MaxValue, Math.Ceiling(Math.Max(0, value))));
         }
 
+        private static LinkedList<QueuedProductionRequest> getOrCreateQueue(CraftQueueData data, HideoutAreas area)
+        {
+            if (!data.AreaQueues.TryGetValue(area, out LinkedList<QueuedProductionRequest>? queue))
+            {
+                queue = [];
+                data.AreaQueues[area] = queue;
+            }
+            return queue;
+        }
+
         private static bool appendQueueEntry(
             CraftQueueData data,
             RecipeInfo recipe,
@@ -1208,11 +1486,7 @@ namespace CraftQueue.Server
             out int queueCount)
         {
             HideoutAreas area = (HideoutAreas)recipe.AreaType;
-            if (!data.AreaQueues.TryGetValue(area, out LinkedList<QueuedProductionRequest>? queue))
-            {
-                queue = [];
-                data.AreaQueues[area] = queue;
-            }
+            LinkedList<QueuedProductionRequest> queue = getOrCreateQueue(data, area);
 
             if (data.AreaQueues.Values
                 .SelectMany(existingQueue => existingQueue)
@@ -1906,6 +2180,15 @@ namespace CraftQueue.Server
         public Dictionary<string, long> RecentlyConfirmedQueueIds { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, long> ProductionRetryAt { get; } = new(StringComparer.Ordinal);
         public Dictionary<int, long> AreaStartedAt { get; } = [];
+        public Task ProfileSaveTask { get; set; } = Task.CompletedTask;
+        public bool ProfileSaveQueued { get; set; }
+        public int ProfileSaveFailures { get; set; }
+        public long ConfirmSequence { get; set; }
+        public Dictionary<string, List<int>>? AvailabilityCache { get; set; }
+        public long AvailabilityCacheAtMs { get; set; }
+        public string? AvailabilityCacheKey { get; set; }
+        public string? RecipeIdsHash { get; set; }
+        public bool LedgerReconciled { get; set; }
     }
 
     internal sealed record ServerCraftPlan(

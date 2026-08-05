@@ -1,5 +1,7 @@
+using CraftQueue.Server;
 using CraftQueue.Server.Models;
 using CraftQueue.Server.Stores;
+using CraftQueue.Shared;
 using Microsoft.Extensions.Logging.Abstractions;
 using SPTarkov.Server.Core.Models.Common;
 using SPTarkov.Server.Core.Models.Enums.Hideout;
@@ -127,6 +129,50 @@ public sealed class QueuePersistenceTests
             Directory.SetCurrentDirectory(originalDirectory);
             Directory.Delete(testDirectory, true);
         }
+    }
+
+    [Fact]
+    public void StartLedgerSurvivesARoundTripAndOlderFilesLoadWithoutIt()
+    {
+        var data = createData("recipe");
+        data.PendingStartConfirmations.Add(new PendingStartConfirmation
+        {
+            QueueId = "queue-1",
+            RecipeId = "recipe",
+            AreaType = (int)HideoutAreas.Workbench,
+            StartTimestamp = 1700000000,
+            Sequence = 7,
+            ConfirmedAt = 1700000000123
+        });
+
+        string json = JsonSerializer.Serialize(data, jsonOptions);
+        CraftQueueData? restored = JsonSerializer.Deserialize<CraftQueueData>(json, jsonOptions);
+
+        Assert.NotNull(restored);
+        PendingStartConfirmation record = Assert.Single(restored.PendingStartConfirmations);
+        Assert.Equal("queue-1", record.QueueId);
+        Assert.Equal(1700000000, record.StartTimestamp);
+        Assert.Equal(7, record.Sequence);
+
+        CraftQueueData? legacy = JsonSerializer.Deserialize<CraftQueueData>(
+            """{ "areaQueues": {} }""", jsonOptions);
+        Assert.NotNull(legacy);
+        legacy.NormalizeAfterLoad();
+        Assert.Empty(legacy.PendingStartConfirmations);
+    }
+
+    [Fact]
+    public void ConfigWithoutWebPortKeepsTheDefaultPort()
+    {
+        var legacy = JsonSerializer.Deserialize<WebServerConfig>(
+            """{ "allowLan": true, "bindAddress": "0.0.0.0" }""", jsonOptions);
+        Assert.NotNull(legacy);
+        Assert.Equal(CraftQueueProtocol.WebPort, legacy.WebPort);
+
+        var custom = JsonSerializer.Deserialize<WebServerConfig>(
+            """{ "allowLan": false, "bindAddress": "127.0.0.1", "webPort": 41234 }""", jsonOptions);
+        Assert.NotNull(custom);
+        Assert.Equal(41234, custom.WebPort);
     }
 
     private static CraftQueueData createData(string recipeId)

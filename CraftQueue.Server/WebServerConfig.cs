@@ -1,3 +1,4 @@
+using CraftQueue.Shared;
 using System.Text.Json.Serialization;
 
 namespace CraftQueue.Server
@@ -9,5 +10,7 @@ namespace CraftQueue.Server
 
         [JsonPropertyName("bindAddress")]
         public string BindAddress { get; set; } = "0.0.0.0";
+        [JsonPropertyName("webPort")]
+        public int WebPort { get; set; } = CraftQueueProtocol.WebPort;
     }
 }

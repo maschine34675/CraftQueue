@@ -50,11 +50,12 @@ namespace CraftQueue.Server
         private byte[]? cachedRecipesJson;
         private Task? recipePreloadTask;
         private bool disposed;
+        private volatile int listeningPort;
         public ClientChannelInfo GetChannelInfo(MongoId sessionId)
         {
             return new ClientChannelInfo
             {
-                Port = CraftQueueProtocol.WebPort,
+                Port = listeningPort,
                 Token = tokenRegistry.GetOrCreateSessionToken(sessionId)
             };
         }
@@ -64,6 +65,7 @@ namespace CraftQueue.Server
             try
             {
                 WebServerConfig config = loadConfig();
+                int port = resolvePort(config);
                 WebApplicationBuilder builder = WebApplication.CreateBuilder();
                 builder.Logging.ClearProviders();
                 builder.WebHost.ConfigureKestrel(options =>
@@ -75,28 +77,30 @@ namespace CraftQueue.Server
 
                     if (!config.AllowLan)
                     {
-                        options.Listen(IPAddress.Loopback, CraftQueueProtocol.WebPort);
+                        options.Listen(IPAddress.Loopback, port);
                         return;
                     }
 
                     if (!IPAddress.TryParse(config.BindAddress, out IPAddress? address))
                         throw new InvalidOperationException($"Invalid CraftQueue bindAddress '{config.BindAddress}'.");
-                    options.Listen(address, CraftQueueProtocol.WebPort);
+                    options.Listen(address, port);
                 });
 
                 app = builder.Build();
                 app.Use(handleSecurity);
                 mapRoutes(app);
                 await app.StartAsync();
+                listeningPort = port;
 
-                string url = $"http://127.0.0.1:{CraftQueueProtocol.WebPort}/?token={Uri.EscapeDataString(tokenRegistry.HostToken)}";
+                string url = $"http://127.0.0.1:{port}/?token={Uri.EscapeDataString(tokenRegistry.HostToken)}";
                 logger.LogInformation("[CraftQueue] Web UI (host link, full access to all profiles - keep it private): {Url}", url);
                 if (config.AllowLan)
-                    logger.LogInformation("[CraftQueue] LAN access is enabled on {Address}:{Port}; players find their personal link in their BepInEx log.", config.BindAddress, CraftQueueProtocol.WebPort);
+                    logger.LogInformation("[CraftQueue] LAN access is enabled on {Address}:{Port}; players find their personal link in their BepInEx log.", config.BindAddress, port);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "[CraftQueue] Failed to start the web server on port {Port}.", CraftQueueProtocol.WebPort);
+                logger.LogError(ex,
+                    "[CraftQueue] Failed to start the web server. Set a free \"webPort\" in config/config.json if the port is already taken; EFT keeps working through the SPT backend meanwhile.");
             }
 
             logger.LogInformation("[CraftQueue] Preparing the crafting recipe cache in the background...");
@@ -142,6 +146,15 @@ namespace CraftQueue.Server
                 }
 
                 await next();
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                logger.LogDebug("[CraftQueue] A web request was aborted by the client ({Path}).", context.Request.Path);
+            }
+            catch (BadHttpRequestException ex) when (context.RequestAborted.IsCancellationRequested)
+            {
+                logger.LogDebug("[CraftQueue] A web request was aborted mid-body by the client ({Path}): {Message}",
+                    context.Request.Path, ex.Message);
             }
             catch (BadHttpRequestException ex)
             {
@@ -325,6 +338,19 @@ namespace CraftQueue.Server
                 cachedRecipesJson ??= JsonSerializer.SerializeToUtf8Bytes(craftQueueService.GetRecipes(), jsonOptions);
                 return cachedRecipesJson;
             }
+        }
+        private int resolvePort(WebServerConfig config)
+        {
+            const int LowestUnprivilegedPort = 1024;
+            if (config.WebPort >= LowestUnprivilegedPort && config.WebPort <= 65535)
+                return config.WebPort;
+
+            logger.LogWarning(
+                "[CraftQueue] The configured webPort {Port} is not usable (allowed: {Min}-65535); falling back to {Default}.",
+                config.WebPort,
+                LowestUnprivilegedPort,
+                CraftQueueProtocol.WebPort);
+            return CraftQueueProtocol.WebPort;
         }
 
         private WebServerConfig loadConfig()

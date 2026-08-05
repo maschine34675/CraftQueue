@@ -97,13 +97,17 @@ public sealed class QueueRecoveryTests
     }
 
     [Fact]
-    public void TelemetryStaysFreshLongerThanAFullWebChannelFailover()
+    public void TelemetryStaysFreshLongerThanTheWorstPollGap()
     {
+        const int worstPollGapSeconds = 8 + 15;
+
         int fresh = (int)typeof(CraftQueueService)
             .GetField("TelemetryFreshSeconds", BindingFlags.Static | BindingFlags.NonPublic)!
             .GetRawConstantValue()!;
 
-        Assert.True(fresh >= 15, "Telemetry must outlive a two-host web channel failover.");
+        Assert.True(
+            fresh > worstPollGapSeconds,
+            $"Telemetry must outlive the worst legitimate poll gap ({worstPollGapSeconds}s), was {fresh}s.");
     }
 
     private static bool invokeIsEnvironmentalFailure(string? errorCode)

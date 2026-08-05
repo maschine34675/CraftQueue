@@ -67,11 +67,19 @@ The default allows LAN access, so the mod works out of the box when EFT and the 
 ```json
 {
   "allowLan": true,
-  "bindAddress": "0.0.0.0"
+  "bindAddress": "0.0.0.0",
+  "webPort": 38473
 }
 ```
 
 Set `allowLan` to `false` to restrict the web interface to the server machine itself.
+
+`webPort` changes the port of the web interface - useful when another
+application already owns 38473. Only the server needs to know: EFT asks it for
+the port, so the in-game link follows automatically. A config file without
+`webPort` keeps the default. If the port cannot be opened, the server logs the
+reason and the mod keeps working through the SPT backend (the queue runs, only
+the web interface is unreachable).
 
 Access is protected by two kinds of tokens:
 

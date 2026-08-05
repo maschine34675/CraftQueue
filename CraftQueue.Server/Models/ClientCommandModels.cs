@@ -99,6 +99,8 @@ namespace CraftQueue.Server.Models
 
         [JsonPropertyName("claim")]
         public QueueClaim? Claim { get; set; }
+        [JsonPropertyName("needRecipeIds")]
+        public bool NeedRecipeIds { get; set; }
     }
 
     public sealed class ClientCommandDelivery

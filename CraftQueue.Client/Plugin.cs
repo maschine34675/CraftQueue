@@ -29,9 +29,12 @@ namespace CraftQueue
         public const string PluginVersion = CraftQueueProtocol.Version;
 
         private const float PollInterval = 2f;
+        private const float IdlePollInterval = 8f;
+        private const float IdleAfterSeconds = 30f;
         private const float WebRetryInterval = 30f;
         private const float CollectRetryInterval = 60f;
-        private const int ClientApiTimeoutMs = 5000;
+        private const int ClientApiTimeoutMs = 15000;
+        private const int ConnectTimeoutMs = 3000;
         private const int MaximumLocalResponseBytes = 1024 * 1024;
 
         private readonly Dictionary<string, float> collectRetryAt = new Dictionary<string, float>(StringComparer.Ordinal);
@@ -48,6 +51,14 @@ namespace CraftQueue
         private bool usingBackendFallback;
         private bool processing;
         private bool overlayHintLogged;
+        private float lastActivityAt;
+        private string lastSentRecipeIdsHash;
+        private bool resendRecipeIds = true;
+        private bool serverSpeaksRecipeHash;
+        private float currentPollInterval()
+        {
+            return Time.time - this.lastActivityAt <= IdleAfterSeconds ? PollInterval : IdlePollInterval;
+        }
 
         private ConfigEntry<KeyboardShortcut> openWebInterfaceKey;
         private ConfigEntry<KeyboardShortcut> openInBrowserKey;
@@ -143,7 +154,7 @@ namespace CraftQueue
             if (this.processing || Time.time < this.nextPoll)
                 return;
 
-            this.nextPoll = Time.time + PollInterval;
+            this.nextPoll = Time.time + currentPollInterval();
             HideoutClass hideout;
             if (!tryGetExecutorHideout(out hideout))
                 return;
@@ -250,17 +261,78 @@ namespace CraftQueue
 
         private async Task<ClientPollResponse> poll(HideoutClass hideout)
         {
+            List<string> availableRecipeIds = buildAvailableRecipeIds(hideout);
+            string recipeIdsHash = computeRecipeIdsHash(availableRecipeIds);
+            bool sendList = !this.serverSpeaksRecipeHash
+                || this.resendRecipeIds
+                || recipeIdsHash != this.lastSentRecipeIdsHash;
+
             var payload = new
             {
                 profileId = RequestHandler.SessionId,
                 productions = buildTelemetry(hideout),
-                availableRecipeIds = buildAvailableRecipeIds(hideout)
+                availableRecipeIds = sendList ? availableRecipeIds : null,
+                recipeIdsHash
             };
-            string response = await this.postWithFallback(
-                "/api/client/poll",
-                "/craftqueue/Poll",
-                payload);
-            return JsonConvert.DeserializeObject<ClientPollResponse>(response);
+
+            ClientPollResponse parsed;
+            try
+            {
+                string response = await this.postWithFallback(
+                    "/api/client/poll",
+                    "/craftqueue/Poll",
+                    payload);
+                parsed = JsonConvert.DeserializeObject<ClientPollResponse>(response);
+            }
+            catch
+            {
+                this.resendRecipeIds = true;
+                throw;
+            }
+
+            if (parsed == null)
+            {
+                this.resendRecipeIds = true;
+                return null;
+            }
+
+            if (parsed.needRecipeIds.HasValue)
+                this.serverSpeaksRecipeHash = true;
+            if (sendList)
+            {
+                this.lastSentRecipeIdsHash = recipeIdsHash;
+                this.resendRecipeIds = false;
+            }
+            if (parsed.needRecipeIds == true)
+            {
+                this.resendRecipeIds = true;
+                this.nextPoll = 0f;
+            }
+            if (parsed.claim != null
+                || (parsed.commands != null && parsed.commands.Count > 0)
+                || (parsed.queueEntries != null && parsed.queueEntries.Count > 0))
+                this.lastActivityAt = Time.time;
+
+            return parsed;
+        }
+
+        private static string computeRecipeIdsHash(List<string> recipeIds)
+        {
+            unchecked
+            {
+                ulong hash = 14695981039346656037UL;
+                foreach (string recipeId in recipeIds.OrderBy(id => id, StringComparer.Ordinal))
+                {
+                    foreach (char character in recipeId)
+                    {
+                        hash ^= character;
+                        hash *= 1099511628211UL;
+                    }
+                    hash ^= '\n';
+                    hash *= 1099511628211UL;
+                }
+                return hash.ToString("x16");
+            }
         }
 
         private async Task startClaimedCraft(HideoutClass hideout, QueueClaim claim)
@@ -1102,7 +1174,12 @@ namespace CraftQueue
             using (var timeout = new CancellationTokenSource(ClientApiTimeoutMs))
             using (timeout.Token.Register(client.Close))
             {
-                await client.ConnectAsync(host, port);
+                using (var connectTimeout = new CancellationTokenSource(ConnectTimeoutMs))
+                using (connectTimeout.Token.Register(client.Close))
+                {
+                    await client.ConnectAsync(host, port);
+                    connectTimeout.Token.ThrowIfCancellationRequested();
+                }
                 timeout.Token.ThrowIfCancellationRequested();
 
                 using (NetworkStream stream = client.GetStream())
@@ -1144,6 +1221,7 @@ namespace CraftQueue
 
         private void openWebInterface(bool forceBrowser)
         {
+            this.lastActivityAt = Time.time;
             ClientChannelInfo info = this.channelInfo;
             if (info == null)
             {
@@ -1291,6 +1369,7 @@ namespace CraftQueue
             public List<ClientCommand> commands { get; set; }
             public List<QueueEntry> queueEntries { get; set; }
             public QueueClaim claim { get; set; }
+            public bool? needRecipeIds { get; set; }
         }
 
         private sealed class ClientCommand

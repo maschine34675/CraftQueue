@@ -10,6 +10,8 @@ namespace CraftQueue.Server.Models
     {
         [JsonPropertyName("areaQueues")]
         public Dictionary<HideoutAreas, LinkedList<QueuedProductionRequest>> AreaQueues { get; set; } = [];
+        [JsonPropertyName("pendingStartConfirmations")]
+        public List<PendingStartConfirmation> PendingStartConfirmations { get; set; } = [];
 
         public bool NormalizeAfterLoad()
         {
@@ -18,6 +20,7 @@ namespace CraftQueue.Server.Models
             var queueIds = new HashSet<string>(StringComparer.Ordinal);
 
             AreaQueues ??= [];
+            PendingStartConfirmations ??= [];
             foreach (HideoutAreas area in AreaQueues.Keys.ToArray())
             {
                 LinkedList<QueuedProductionRequest>? queue = AreaQueues[area];
@@ -34,5 +37,23 @@ namespace CraftQueue.Server.Models
 
             return changed;
         }
+    }
+
+    public record PendingStartConfirmation
+    {
+        [JsonPropertyName("queueId")]
+        public string QueueId { get; set; } = "";
+
+        [JsonPropertyName("recipeId")]
+        public string RecipeId { get; set; } = "";
+
+        [JsonPropertyName("areaType")]
+        public int AreaType { get; set; }
+        [JsonPropertyName("startTimestamp")]
+        public long StartTimestamp { get; set; }
+        [JsonPropertyName("sequence")]
+        public long Sequence { get; set; }
+        [JsonPropertyName("confirmedAt")]
+        public long ConfirmedAt { get; set; }
     }
 }

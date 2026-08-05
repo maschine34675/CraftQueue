@@ -11,9 +11,11 @@ namespace CraftQueue.Server.Models
 
         [JsonPropertyName("productions")]
         public List<ActiveProductionTelemetry> Productions { get; set; } = [];
-
         [JsonPropertyName("availableRecipeIds")]
-        public List<string> AvailableRecipeIds { get; set; } = [];
+        public List<string>? AvailableRecipeIds { get; set; }
+
+        [JsonPropertyName("recipeIdsHash")]
+        public string? RecipeIdsHash { get; set; }
     }
 
     public class ActiveProductionTelemetry
