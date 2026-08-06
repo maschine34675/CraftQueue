@@ -47,14 +47,13 @@ namespace CraftQueue.UI
                 overlay = handle;
                 currentUrl = url;
                 overlayWasReady = false;
-
-                var created = handle;
+                object created = handle;
                 handle.Ready += () => overlayWasReady = true;
                 handle.Failed += () =>
                 {
                     bool openBrowser = !overlayWasReady;
                     overlayFailed = true;
-                    created.Dispose();
+                    ((WebOverlay.IWebOverlay)created).Dispose();
                     if (ReferenceEquals(overlay, created))
                         overlay = null;
                     logWarning("the overlay failed; using the browser.");

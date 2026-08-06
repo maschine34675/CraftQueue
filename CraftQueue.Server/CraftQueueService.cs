@@ -848,6 +848,7 @@ namespace CraftQueue.Server
                         : new Dictionary<string, HideoutProduction>(cachedProductionLookup, StringComparer.Ordinal);
 
                 ServerInventorySnapshot snapshot = createInventorySnapshot(pmcData);
+                Dictionary<MongoId, int> heldTools = getToolsHeldByRunningCrafts(pmcData);
                 var result = new Dictionary<string, List<int>>(StringComparer.Ordinal);
                 foreach ((string recipeId, HideoutProduction recipe) in lookup)
                 {
@@ -858,7 +859,13 @@ namespace CraftQueue.Server
                     {
                         if ((requirement.Type != "Item" && requirement.Type != "Tool") || !requirement.TemplateId.HasValue)
                             continue;
-                        counts.Add(getSuitableItems(snapshot, requirement).Sum(stackCount));
+
+                        int available = getSuitableItems(snapshot, requirement).Sum(stackCount);
+                        if (requirement.Type == "Tool"
+                            && heldTools.TryGetValue(requirement.TemplateId!.Value, out int held))
+                            available += held;
+
+                        counts.Add(available);
                     }
                     result[recipeId] = counts;
                 }
@@ -1586,6 +1593,14 @@ namespace CraftQueue.Server
             allPlans.AddRange(queuedPlans);
             return validateProjectedTools(pmcData, snapshot, allPlans, out error);
         }
+        private static Dictionary<MongoId, int> getToolsHeldByRunningCrafts(PmcData pmcData)
+        {
+            return (pmcData.Hideout?.Production ?? [])
+                .Where(pair => pair.Value?.InProgress == true)
+                .SelectMany(pair => pair.Value?.SptRequiredTools ?? [])
+                .GroupBy(item => item.Template)
+                .ToDictionary(group => group.Key, group => group.Sum(stackCount));
+        }
 
         private bool validateProjectedTools(
             PmcData pmcData,
@@ -1619,11 +1634,7 @@ namespace CraftQueue.Server
                 }
             }
 
-            var heldTools = (pmcData.Hideout?.Production ?? [])
-                .Where(pair => pair.Value?.InProgress == true)
-                .SelectMany(pair => pair.Value?.SptRequiredTools ?? [])
-                .GroupBy(item => item.Template)
-                .ToDictionary(group => group.Key, group => group.Sum(stackCount));
+            Dictionary<MongoId, int> heldTools = getToolsHeldByRunningCrafts(pmcData);
 
             foreach ((MongoId templateId, List<Requirement> requirements) in requirementsByTemplate)
             {

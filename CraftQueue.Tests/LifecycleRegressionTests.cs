@@ -2,6 +2,7 @@ using CraftQueue.Server;
 using SPTarkov.Server.Core.Callbacks;
 using SPTarkov.Server.Core.Models.Common;
 using SPTarkov.Server.Core.Models.Eft.Common;
+using SPTarkov.Server.Core.Models.Eft.Common.Tables;
 using SPTarkov.Server.Core.Models.Eft.Hideout;
 using SPTarkov.Server.Core.Models.Eft.Match;
 using SPTarkov.Server.Core.Services;
@@ -118,6 +119,39 @@ public sealed class LifecycleRegressionTests
         Assert.Contains("data-toggle-group", html);
         Assert.Contains("searching||expandedGroups.has(name)", html);
         Assert.Contains("localStorage.getItem('craftqueue-expanded')", html);
+    }
+
+    [Fact]
+    public void ToolsBorrowedByRunningCraftsCountAsAvailable()
+    {
+        MethodInfo held = typeof(CraftQueueService).GetMethod(
+            "getToolsHeldByRunningCrafts",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+
+        var leatherman = new MongoId("544fb5454bdc2df8738b456a");
+        var pmcData = new PmcData
+        {
+            Hideout = new SPTarkov.Server.Core.Models.Eft.Common.Tables.Hideout
+            {
+                Production = new Dictionary<MongoId, Production?>
+                {
+                    [new MongoId("655b56eb32b0b1645e6f54c8")] = new Production
+                    {
+                        InProgress = true,
+                        SptRequiredTools = [new Item { Id = new MongoId(), Template = leatherman }]
+                    },
+                    [new MongoId("5d5589c1f934db006d2d5b32")] = new Production
+                    {
+                        InProgress = false,
+                        SptRequiredTools = [new Item { Id = new MongoId(), Template = leatherman }]
+                    }
+                }
+            }
+        };
+
+        var result = (Dictionary<MongoId, int>)held.Invoke(null, [pmcData])!;
+
+        Assert.Equal(1, result[leatherman]);
     }
 
     [Fact]
