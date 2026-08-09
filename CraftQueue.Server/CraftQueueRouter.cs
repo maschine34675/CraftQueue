@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace CraftQueue.Server
 {
-    [Injectable]
+    [Injectable(TypePriority = OnLoadOrder.Routers + 1)]
     public class CraftQueueRouter(
         JsonUtil jsonUtil,
         CraftQueueService craftQueueService,
@@ -15,19 +15,19 @@ namespace CraftQueue.Server
         [
             new RouteAction(
                 "/craftqueue/ChannelInfo",
-                (url, requestData, sessionId, output) =>
+                (url, requestData, sessionId, output, cancellationToken) =>
                     ValueTask.FromResult<object>(jsonUtil.Serialize(webServer.GetChannelInfo(sessionId))!)),
             new RouteAction<ClientPollRequestData>(
                 "/craftqueue/Poll",
-                (url, requestData, sessionId, output) =>
+                (url, requestData, sessionId, output, cancellationToken) =>
                     ValueTask.FromResult(jsonUtil.Serialize(craftQueueService.Poll(sessionId, requestData))!)),
             new RouteAction<QueueAckRequestData>(
                 "/craftqueue/Ack",
-                (url, requestData, sessionId, output) =>
+                (url, requestData, sessionId, output, cancellationToken) =>
                     ValueTask.FromResult(jsonUtil.Serialize(craftQueueService.AcknowledgeClaim(sessionId, requestData))!)),
             new RouteAction<ClientCommandResultRequestData>(
                 "/craftqueue/CommandResult",
-                (url, requestData, sessionId, output) =>
+                (url, requestData, sessionId, output, cancellationToken) =>
                     ValueTask.FromResult(jsonUtil.Serialize(craftQueueService.CompleteClientCommand(sessionId, requestData))!))
         ])
     {

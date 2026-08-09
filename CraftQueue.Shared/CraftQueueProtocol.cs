@@ -5,8 +5,8 @@ namespace CraftQueue.Shared
         public const string ModGuid = "com.maschine.CraftQueue";
         public const string ModName = "CraftQueue";
         public const string PluginName = "maschine-CraftQueue";
-        public const string Version = "1.2.2";
-        public const string SptVersion = "4.0.13";
+        public const string Version = "2.0.0";
+        public const string SptVersion = "4.1.0";
         public const int WebPort = 38473;
     }
 }

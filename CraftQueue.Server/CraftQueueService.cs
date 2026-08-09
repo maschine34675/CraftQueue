@@ -3,7 +3,9 @@ using CraftQueue.Server.Stores;
 using Microsoft.Extensions.Logging;
 using SPTarkov.DI.Annotations;
 using SPTarkov.Server.Core.Controllers;
-using SPTarkov.Server.Core.Helpers;
+using SPTarkov.Server.Core.Helpers.Items;
+using SPTarkov.Server.Core.Helpers.Profile;
+using SPTarkov.Server.Core.Models.Spt.Tables;
 using SPTarkov.Server.Core.Models.Common;
 using SPTarkov.Server.Core.Models.Eft.Common;
 using SPTarkov.Server.Core.Models.Eft.Common.Tables;
@@ -12,7 +14,6 @@ using SPTarkov.Server.Core.Models.Enums;
 using SPTarkov.Server.Core.Models.Enums.Hideout;
 using SPTarkov.Server.Core.Routers;
 using SPTarkov.Server.Core.Servers;
-using SPTarkov.Server.Core.Services;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -25,7 +26,8 @@ namespace CraftQueue.Server
     [Injectable(InjectionType = InjectionType.Singleton)]
     public class CraftQueueService(
         CraftQueueStore craftQueueStore,
-        DatabaseService databaseService,
+        HideoutTable hideoutTable,
+        TemplateTable templateTable,
         ItemHelper itemHelper,
         HideoutHelper hideoutHelper,
         HideoutController hideoutController,
@@ -886,14 +888,14 @@ namespace CraftQueue.Server
                 if (cachedRecipes != null)
                     return cachedRecipes;
 
-                List<HideoutProduction>? recipes = databaseService.GetHideout().Production.Recipes;
+                List<HideoutProduction>? recipes = hideoutTable.Production.Recipes;
                 var result = new Dictionary<string, List<RecipeInfo>>(StringComparer.Ordinal);
                 var lookup = new Dictionary<string, RecipeInfo>(StringComparer.Ordinal);
                 var productionLookup = new Dictionary<string, HideoutProduction>(StringComparer.Ordinal);
 
                 if (recipes != null)
                 {
-                    Dictionary<MongoId, TemplateItem> items = databaseService.GetItems();
+                    Dictionary<MongoId, TemplateItem> items = templateTable.Items;
                     var itemNames = new Dictionary<MongoId, string>();
                     string getItemName(MongoId templateId)
                     {
@@ -1412,9 +1414,9 @@ namespace CraftQueue.Server
                 return 1;
             if (production.NeedFuelForAllProductionTime ?? recipe.NeedFuelForAllProductionTime ?? false)
                 return 0;
-            bool needsFuel = databaseService.GetHideout().Areas?
+            bool needsFuel = hideoutTable.Areas?
                 .FirstOrDefault(area => area.Type == areaType)?.NeedsFuel == true;
-            return needsFuel ? databaseService.GetHideout().Settings?.GeneratorSpeedWithoutFuel ?? 0 : 1;
+            return needsFuel ? hideoutTable.Settings?.GeneratorSpeedWithoutFuel ?? 0 : 1;
         }
         private double pendingProgress(PmcData pmcData, double rate, long now)
         {
@@ -1767,7 +1769,7 @@ namespace CraftQueue.Server
                 return result;
             }
             List<Item> stashItems = allItems.Where(isInStash).ToList();
-            return new ServerInventorySnapshot(stashItems, allItems, databaseService.GetItems());
+            return new ServerInventorySnapshot(stashItems, allItems, templateTable.Items);
         }
 
         private IEnumerable<Item> getSuitableItems(ServerInventorySnapshot snapshot, Requirement requirement)

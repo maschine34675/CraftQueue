@@ -25,7 +25,7 @@ using System.Threading.Tasks;
 
 namespace CraftQueue.Server
 {
-    [Injectable(InjectionType = InjectionType.Singleton, TypePriority = OnLoadOrder.PostSptModLoader)]
+    [Injectable(InjectionType = InjectionType.Singleton, TypePriority = OnLoadOrder.PostLoad)]
     public sealed class WebServer(
         CraftQueueService craftQueueService,
         SaveServer saveServer,
@@ -60,7 +60,7 @@ namespace CraftQueue.Server
             };
         }
 
-        public async Task OnLoad()
+        public async Task OnLoadAsync(CancellationToken cancellationToken)
         {
             try
             {
@@ -89,7 +89,7 @@ namespace CraftQueue.Server
                 app = builder.Build();
                 app.Use(handleSecurity);
                 mapRoutes(app);
-                await app.StartAsync();
+                await app.StartAsync(cancellationToken);
                 listeningPort = port;
 
                 string url = $"http://127.0.0.1:{port}/?token={Uri.EscapeDataString(tokenRegistry.HostToken)}";

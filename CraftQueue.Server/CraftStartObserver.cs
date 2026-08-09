@@ -3,21 +3,23 @@ using SPTarkov.DI.Annotations;
 using SPTarkov.Reflection.Patching;
 using SPTarkov.Server.Core.Callbacks;
 using SPTarkov.Server.Core.DI;
-using SPTarkov.Server.Core.Helpers;
+using SPTarkov.Server.Core.Helpers.Profile;
 using SPTarkov.Server.Core.Models.Common;
 using SPTarkov.Server.Core.Models.Eft.Hideout;
 using SPTarkov.Server.Core.Models.Eft.ItemEvent;
 using SPTarkov.Server.Core.Models.Eft.Match;
 using SPTarkov.Server.Core.Routers;
-using SPTarkov.Server.Core.Services;
+using SPTarkov.Server.Core.Services.InRaid;
+using SPTarkov.Server.Core.Services.Locales;
 using SPTarkov.Server.Core.Utils;
 using System;
 using System.Reflection;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace CraftQueue.Server
 {
-    [Injectable(TypePriority = OnLoadOrder.PostSptModLoader)]
+    [Injectable(TypePriority = OnLoadOrder.PostLoad)]
     public sealed class CraftStartObserver(
         CraftQueueService craftQueueService,
         EventOutputHolder eventOutputHolder,
@@ -26,7 +28,7 @@ namespace CraftQueue.Server
         ServerLocalisationService serverLocalisationService,
         ILogger<CraftStartObserver> logger) : IOnLoad
     {
-        public Task OnLoad()
+        public Task OnLoadAsync(CancellationToken cancellationToken)
         {
             HideoutStartConfirmationPatch.Configure(craftQueueService, logger);
             LocalRaidStartPatch.Configure(craftQueueService, logger);
@@ -38,9 +40,8 @@ namespace CraftQueue.Server
             try
             {
                 Patches.CancelProductionMissingCraftPatch.Configure(eventOutputHolder, httpResponseUtil, inventoryHelper, serverLocalisationService, logger);
-                new Patches.CancelProductionRequestPatch().Enable();
                 new Patches.CancelProductionMissingCraftPatch().Enable();
-                logger.LogInformation("[CraftQueue] Installed the craft cancel fix for SPT's request converter.");
+                logger.LogInformation("[CraftQueue] Installed the craft cancel fix for SPT's missing-craft indexer.");
             }
             catch (Exception ex)
             {
@@ -81,9 +82,9 @@ namespace CraftQueue.Server
         public static void Postfix(
             HideoutSingleProductionStartRequestData request,
             MongoId sessionID,
-            ItemEventRouterResponse __result)
+            ValueTask<ItemEventRouterResponse> __result)
         {
-            if (__result?.Warnings?.Count > 0)
+            if (__result.Result?.Warnings?.Count > 0)
                 return;
 
             try
@@ -113,10 +114,11 @@ namespace CraftQueue.Server
         protected override MethodBase GetTargetMethod()
         {
             return typeof(LocationLifecycleService).GetMethod(
-                nameof(LocationLifecycleService.StartLocalRaid),
+                nameof(LocationLifecycleService.StartLocalRaidAsync),
                 [
                     typeof(MongoId),
-                    typeof(StartLocalRaidRequestData)
+                    typeof(StartLocalRaidRequestData),
+                    typeof(CancellationToken)
                 ])!;
         }
 
@@ -150,10 +152,11 @@ namespace CraftQueue.Server
         protected override MethodBase GetTargetMethod()
         {
             return typeof(LocationLifecycleService).GetMethod(
-                nameof(LocationLifecycleService.EndLocalRaid),
+                nameof(LocationLifecycleService.EndLocalRaidAsync),
                 [
                     typeof(MongoId),
-                    typeof(EndLocalRaidRequestData)
+                    typeof(EndLocalRaidRequestData),
+                    typeof(CancellationToken)
                 ])!;
         }
 

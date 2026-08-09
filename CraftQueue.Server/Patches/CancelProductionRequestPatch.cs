@@ -14,35 +14,16 @@ using SPTarkov.Server.Core.Models.Enums;
 using SPTarkov.Server.Core.Routers;
 using SPTarkov.Server.Core.Services;
 using SPTarkov.Server.Core.Utils;
-using SPTarkov.Server.Core.Utils.Json.Converters;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using SPTarkov.Server.Core.Helpers.Profile;
+using SPTarkov.Server.Core.Services.Locales;
 
 namespace CraftQueue.Server.Patches
 {
-    public sealed class CancelProductionRequestPatch : AbstractPatch
-    {
-        protected override MethodBase GetTargetMethod()
-        {
-            return AccessTools.Method(typeof(BaseInteractionRequestDataConverter), "ConvertToCorrectType")
-                ?? throw new InvalidOperationException(
-                    "BaseInteractionRequestDataConverter.ConvertToCorrectType was not found; the CraftQueue cancel fix needs updating for this SPT version.");
-        }
-
-        [PatchPostfix]
-        public static void Postfix(string action, string jsonText, JsonSerializerOptions options, ref BaseInteractionRequestData? __result)
-        {
-            if (!string.Equals(action, HideoutEventActions.HIDEOUT_CANCEL_PRODUCTION_COMMAND, StringComparison.Ordinal))
-                return;
-            if (__result is HideoutCancelProductionRequestData)
-                return;
-
-            __result = JsonSerializer.Deserialize<HideoutCancelProductionRequestData>(jsonText, options);
-        }
-    }
     public sealed class CancelProductionMissingCraftPatch : AbstractPatch
     {
         private static EventOutputHolder? eventOutputHolder;

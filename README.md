@@ -48,7 +48,7 @@ An ambiguous start is never issued twice automatically. It is shown as `Needs Re
 
 ## Installation
 
-Use the release archive and copy its `BepInEx` and `SPT` folders into the SPT installation.
+Use the release archive and copy its `BepInEx` and `SPT_Runtime` folders into the SPT installation.
 
 Start the SPT server and EFT. The server log prints a one-time URL such as:
 
@@ -60,7 +60,7 @@ Open that complete URL. Choose the desired profile if the installation contains 
 
 The server configuration is stored at:
 
-`SPT/user/mods/CraftQueue/config/config.json`
+`SPT_Runtime/user/mods/CraftQueue/config/config.json`
 
 The default allows LAN access, so the mod works out of the box when EFT and the SPT server run on different machines:
 

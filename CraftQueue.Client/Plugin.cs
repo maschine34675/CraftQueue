@@ -2,6 +2,7 @@ using BepInEx;
 using BepInEx.Configuration;
 using Comfort.Common;
 using CraftQueue.Shared;
+using EFT.Communications;
 using EFT;
 using EFT.Hideout;
 using EFT.InventoryLogic;
@@ -17,6 +18,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
+using JsonType;
 
 namespace CraftQueue
 {
@@ -155,7 +157,7 @@ namespace CraftQueue
                 return;
 
             this.nextPoll = Time.time + currentPollInterval();
-            HideoutClass hideout;
+            HideoutRepresentation hideout;
             if (!tryGetExecutorHideout(out hideout))
                 return;
 
@@ -167,7 +169,7 @@ namespace CraftQueue
             this.processing = true;
             try
             {
-                HideoutClass hideout;
+                HideoutRepresentation hideout;
                 if (!tryGetExecutorHideout(out hideout))
                     return;
                 object executor = hideout.ProductionController;
@@ -210,36 +212,36 @@ namespace CraftQueue
             }
         }
 
-        private static bool tryGetExecutorHideout(out HideoutClass hideout)
+        private static bool tryGetExecutorHideout(out HideoutRepresentation hideout)
         {
             hideout = null;
 #pragma warning disable CS0618
-            if (GClass2340.InRaid)
+            if (InGameStatus.InRaid)
                 return false;
 #pragma warning restore CS0618
 
-            HideoutClass candidate = Singleton<HideoutClass>.Instance;
+            HideoutRepresentation candidate = Singleton<HideoutRepresentation>.Instance;
             if (candidate == null
                 || candidate.ProductionController == null
-                || candidate.ProductionController.Dictionary_0 == null
-                || candidate.ISession == null
-                || candidate.ISession.Profile == null
-                || candidate.ISession.Profile.Inventory == null
-                || candidate.ISession.Profile.Inventory.Stash == null)
+                || candidate.ProductionController._areaProducers == null
+                || candidate._session == null
+                || candidate._session.Profile == null
+                || candidate._session.Profile.Inventory == null
+                || candidate._session.Profile.Inventory.Stash == null)
                 return false;
-            if (candidate.InventoryController_0 == null
-                || candidate.InventoryController_0.Inventory == null
-                || candidate.InventoryController_0.Inventory.Stash == null
-                || !ReferenceEquals(candidate.InventoryController_0.Inventory, candidate.ISession.Profile.Inventory))
+            if (candidate._inventoryController == null
+                || candidate._inventoryController.Inventory == null
+                || candidate._inventoryController.Inventory.Stash == null
+                || !ReferenceEquals(candidate._inventoryController.Inventory, candidate._session.Profile.Inventory))
                 return false;
 
             hideout = candidate;
             return true;
         }
 
-        private static bool isSameExecutor(HideoutClass expectedHideout, object expectedController)
+        private static bool isSameExecutor(HideoutRepresentation expectedHideout, object expectedController)
         {
-            HideoutClass current;
+            HideoutRepresentation current;
             return tryGetExecutorHideout(out current)
                 && ReferenceEquals(current, expectedHideout)
                 && ReferenceEquals(current.ProductionController, expectedController);
@@ -259,7 +261,7 @@ namespace CraftQueue
             }
         }
 
-        private async Task<ClientPollResponse> poll(HideoutClass hideout)
+        private async Task<ClientPollResponse> poll(HideoutRepresentation hideout)
         {
             List<string> availableRecipeIds = buildAvailableRecipeIds(hideout);
             string recipeIdsHash = computeRecipeIdsHash(availableRecipeIds);
@@ -335,10 +337,10 @@ namespace CraftQueue
             }
         }
 
-        private async Task startClaimedCraft(HideoutClass hideout, QueueClaim claim)
+        private async Task startClaimedCraft(HideoutRepresentation hideout, QueueClaim claim)
         {
-            GClass2431 producer;
-            ProductionBuildAbstractClass scheme;
+            ItemsProducerBase producer;
+            BaseHideoutScheme scheme;
             if (!tryFindScheme(hideout, claim.recipeId, out producer, out scheme))
             {
                 await this.ack(claim.queueId, false, "recipe_unavailable", "Recipe is not available in the local hideout.");
@@ -346,7 +348,7 @@ namespace CraftQueue
             }
 
             if (producer.ProducingItems.Count > 0
-                || producer.Dictionary_2.Count > 0
+                || producer._errorItems.Count > 0
                 || producer.HasCompletedItems
                 || !producer.CanStart
                 || !producer.CanStartByProductionCount())
@@ -355,14 +357,14 @@ namespace CraftQueue
                 return;
             }
 
-            if (!producer.CanStartScheme((GClass2440)scheme))
+            if (!producer.CanStartScheme((ProductionScheme)scheme))
             {
                 await this.ack(claim.queueId, false, "generator_unavailable", "The generator requirements are not currently met.");
                 return;
             }
 
-            List<GClass1433> items;
-            List<GClass1433> tools;
+            List<ItemToHandover> items;
+            List<ItemToHandover> tools;
             string selectionError;
             if (!trySelectItems(hideout, scheme, out items, out tools, out selectionError))
             {
@@ -372,7 +374,7 @@ namespace CraftQueue
 
             try
             {
-                hideout.ISession.StartSingleProduction(scheme._id, items, tools);
+                hideout._session.StartSingleProduction(scheme._id, items, tools);
                 producer.StartProducing(scheme);
             }
             catch (Exception ex)
@@ -387,7 +389,7 @@ namespace CraftQueue
         }
 
         private async Task processCommands(
-            HideoutClass hideout,
+            HideoutRepresentation hideout,
             IEnumerable<ClientCommand> commands,
             IList<QueueEntry> queueEntries)
         {
@@ -408,8 +410,8 @@ namespace CraftQueue
                     && string.Equals(command.kind, "Enqueue", StringComparison.OrdinalIgnoreCase)
                     && queueEntries != null)
                 {
-                    GClass2431 producer;
-                    ProductionBuildAbstractClass scheme;
+                    ItemsProducerBase producer;
+                    BaseHideoutScheme scheme;
                     if (tryFindScheme(hideout, command.recipeId, out producer, out scheme))
                     {
                         queueEntries.Add(new QueueEntry
@@ -426,7 +428,7 @@ namespace CraftQueue
         }
 
         private async Task<CachedCommandResult> executeCommand(
-            HideoutClass hideout,
+            HideoutRepresentation hideout,
             ClientCommand command,
             IList<QueueEntry> queueEntries)
         {
@@ -440,8 +442,8 @@ namespace CraftQueue
             {
                 if (matchesWireEnum(command.kind, "Enqueue", 0))
                 {
-                    GClass2431 producer;
-                    ProductionBuildAbstractClass scheme;
+                    ItemsProducerBase producer;
+                    BaseHideoutScheme scheme;
                     if (!tryFindScheme(hideout, command.recipeId, out producer, out scheme) || scheme.locked)
                     {
                         result.success = false;
@@ -459,8 +461,8 @@ namespace CraftQueue
 
                 if (matchesWireEnum(command.kind, "CancelActive", 1))
                 {
-                    GClass2431 producer;
-                    ProductionBuildAbstractClass scheme;
+                    ItemsProducerBase producer;
+                    BaseHideoutScheme scheme;
                     if (!tryFindScheme(hideout, command.recipeId, out producer, out scheme)
                         || !isCurrentProduction(hideout, command.recipeId, command.instanceId))
                     {
@@ -621,18 +623,18 @@ namespace CraftQueue
             }
         }
 
-        private async Task collectCompletedProductions(HideoutClass hideout, object executor)
+        private async Task collectCompletedProductions(HideoutRepresentation hideout, object executor)
         {
-            var productionGroups = hideout.ProductionController.Dictionary_0;
+            var productionGroups = hideout.ProductionController._areaProducers;
             if (productionGroups == null)
                 return;
 
-            foreach (List<GClass2431> producers in productionGroups.Values.ToList())
+            foreach (List<ItemsProducerBase> producers in productionGroups.Values.ToList())
             {
                 if (producers == null)
                     continue;
 
-                foreach (GClass2431 producer in producers.ToList())
+                foreach (ItemsProducerBase producer in producers.ToList())
                 {
                     if (producer == null || producer.CompleteItemsStorage == null || producer.Schemes == null)
                         continue;
@@ -652,7 +654,7 @@ namespace CraftQueue
                         if (this.collectRetryAt.TryGetValue(recipeId, out retryAt) && Time.realtimeSinceStartup < retryAt)
                             continue;
 
-                        ProductionBuildAbstractClass scheme;
+                        BaseHideoutScheme scheme;
                         if (!producer.Schemes.TryGetValue(recipeId, out scheme) || scheme.continuous)
                             continue;
                         if (!isSameExecutor(hideout, executor))
@@ -679,21 +681,21 @@ namespace CraftQueue
             }
         }
 
-        private List<object> buildTelemetry(HideoutClass hideout)
+        private List<object> buildTelemetry(HideoutRepresentation hideout)
         {
             var productions = new List<object>();
             var seenRuns = new HashSet<string>(StringComparer.Ordinal);
             if (hideout == null
                 || hideout.ProductionController == null
-                || hideout.ProductionController.Dictionary_0 == null)
+                || hideout.ProductionController._areaProducers == null)
                 return productions;
-            Dictionary<string, HideoutProductionsDataClass> snapshot = getProfileProductionSnapshot(hideout);
+            Dictionary<string, ProductionData> snapshot = getProfileProductionSnapshot(hideout);
 
-            foreach (List<GClass2431> producers in hideout.ProductionController.Dictionary_0.Values)
+            foreach (List<ItemsProducerBase> producers in hideout.ProductionController._areaProducers.Values)
             {
                 if (producers == null)
                     continue;
-                foreach (GClass2431 producer in producers)
+                foreach (ItemsProducerBase producer in producers)
                 {
                     if (producer == null || producer.Schemes == null)
                         continue;
@@ -710,12 +712,12 @@ namespace CraftQueue
         private void addRunningProductions(
             List<object> productions,
             HashSet<string> seenRuns,
-            GClass2431 producer,
-            Dictionary<string, HideoutProductionsDataClass> snapshot)
+            ItemsProducerBase producer,
+            Dictionary<string, ProductionData> snapshot)
         {
-            foreach (KeyValuePair<string, GClass2438> pair in producer.ProducingItems)
+            foreach (KeyValuePair<string, ProducingItemController> pair in producer.ProducingItems)
             {
-                GClass2438 live = pair.Value;
+                ProducingItemController live = pair.Value;
                 if (live == null || !isQueueableScheme(producer, pair.Key))
                     continue;
 
@@ -730,14 +732,14 @@ namespace CraftQueue
         private void addPausedProductions(
             List<object> productions,
             HashSet<string> seenRuns,
-            GClass2431 producer,
-            Dictionary<string, HideoutProductionsDataClass> snapshot)
+            ItemsProducerBase producer,
+            Dictionary<string, ProductionData> snapshot)
         {
-            foreach (KeyValuePair<string, GClass2438> pair in producer.Dictionary_2)
+            foreach (KeyValuePair<string, ProducingItemController> pair in producer._errorItems)
             {
                 if (pair.Value == null || !isQueueableScheme(producer, pair.Key))
                     continue;
-                HideoutProductionsDataClass snapshotEntry = lookupSnapshot(snapshot, pair.Key);
+                ProductionData snapshotEntry = lookupSnapshot(snapshot, pair.Key);
                 int total = snapshotEntry == null ? 0 : Math.Max(0, snapshotEntry.ProductionTime);
                 int left = snapshotEntry == null ? 0 : Math.Max(0, (int)Math.Ceiling(total - snapshotEntry.Progress));
                 productions.Add(this.describeProduction(seenRuns, producer, pair.Key, left, total, 0.0));
@@ -746,7 +748,7 @@ namespace CraftQueue
 
         private object describeProduction(
             HashSet<string> seenRuns,
-            GClass2431 producer,
+            ItemsProducerBase producer,
             string recipeId,
             int timeLeft,
             int productionTime,
@@ -781,60 +783,60 @@ namespace CraftQueue
                 this.runIds.Remove(runKey);
         }
 
-        private static bool isQueueableScheme(GClass2431 producer, string recipeId)
+        private static bool isQueueableScheme(ItemsProducerBase producer, string recipeId)
         {
-            ProductionBuildAbstractClass scheme;
+            BaseHideoutScheme scheme;
             return producer.Schemes.TryGetValue(recipeId, out scheme)
-                && scheme is GClass2440
+                && scheme is ProductionScheme
                 && !scheme.continuous;
         }
 
-        private static HideoutProductionsDataClass lookupSnapshot(
-            Dictionary<string, HideoutProductionsDataClass> snapshot,
+        private static ProductionData lookupSnapshot(
+            Dictionary<string, ProductionData> snapshot,
             string recipeId)
         {
-            HideoutProductionsDataClass entry = null;
+            ProductionData entry = null;
             if (snapshot != null)
                 snapshot.TryGetValue(recipeId, out entry);
             return entry;
         }
 
         private static int snapshotTotal(
-            Dictionary<string, HideoutProductionsDataClass> snapshot,
+            Dictionary<string, ProductionData> snapshot,
             string recipeId,
             int liveTotal)
         {
-            HideoutProductionsDataClass entry = lookupSnapshot(snapshot, recipeId);
+            ProductionData entry = lookupSnapshot(snapshot, recipeId);
             return entry == null ? liveTotal : Math.Max(liveTotal, Math.Max(0, entry.ProductionTime));
         }
 
-        private static Dictionary<string, HideoutProductionsDataClass> getProfileProductionSnapshot(HideoutClass hideout)
+        private static Dictionary<string, ProductionData> getProfileProductionSnapshot(HideoutRepresentation hideout)
         {
             if (hideout == null
-                || hideout.ISession == null
-                || hideout.ISession.Profile == null
-                || hideout.ISession.Profile.Hideout == null)
+                || hideout._session == null
+                || hideout._session.Profile == null
+                || hideout._session.Profile.Hideout == null)
                 return null;
-            return hideout.ISession.Profile.Hideout.Production;
+            return hideout._session.Profile.Hideout.Production;
         }
 
-        private static List<string> buildAvailableRecipeIds(HideoutClass hideout)
+        private static List<string> buildAvailableRecipeIds(HideoutRepresentation hideout)
         {
             var recipeIds = new HashSet<string>(StringComparer.Ordinal);
-            if (hideout == null || hideout.ProductionController == null || hideout.ProductionController.Dictionary_0 == null)
+            if (hideout == null || hideout.ProductionController == null || hideout.ProductionController._areaProducers == null)
                 return recipeIds.ToList();
 
-            foreach (List<GClass2431> producers in hideout.ProductionController.Dictionary_0.Values)
+            foreach (List<ItemsProducerBase> producers in hideout.ProductionController._areaProducers.Values)
             {
                 if (producers == null)
                     continue;
-                foreach (GClass2431 producer in producers)
+                foreach (ItemsProducerBase producer in producers)
                 {
                     if (producer == null || producer.Schemes == null)
                         continue;
-                    foreach (ProductionBuildAbstractClass scheme in producer.Schemes.Values)
+                    foreach (BaseHideoutScheme scheme in producer.Schemes.Values)
                     {
-                        if (scheme is GClass2440 && !scheme.continuous && !scheme.locked)
+                        if (scheme is ProductionScheme && !scheme.continuous && !scheme.locked)
                             recipeIds.Add(scheme._id);
                     }
                 }
@@ -843,13 +845,13 @@ namespace CraftQueue
             return recipeIds.ToList();
         }
 
-        private bool isCurrentProduction(HideoutClass hideout, string recipeId, string instanceId)
+        private bool isCurrentProduction(HideoutRepresentation hideout, string recipeId, string instanceId)
         {
-            GClass2431 producer;
-            ProductionBuildAbstractClass scheme;
+            ItemsProducerBase producer;
+            BaseHideoutScheme scheme;
             if (!tryFindScheme(hideout, recipeId, out producer, out scheme))
                 return false;
-            if (!producer.ProducingItems.ContainsKey(recipeId) && !producer.Dictionary_2.ContainsKey(recipeId))
+            if (!producer.ProducingItems.ContainsKey(recipeId) && !producer._errorItems.ContainsKey(recipeId))
                 return false;
             string runId;
             return this.runIds.TryGetValue((int)producer.AreaType + ":" + recipeId, out runId)
@@ -857,10 +859,10 @@ namespace CraftQueue
         }
 
         private static bool validateProjectedRequirements(
-            HideoutClass hideout,
+            HideoutRepresentation hideout,
             IList<QueueEntry> queueEntries,
-            GClass2431 candidateProducer,
-            ProductionBuildAbstractClass candidateScheme,
+            ItemsProducerBase candidateProducer,
+            BaseHideoutScheme candidateScheme,
             out string error)
         {
             error = null;
@@ -879,8 +881,8 @@ namespace CraftQueue
                     && activeKeys.Contains(entry.areaType + ":" + entry.recipeId))
                     continue;
 
-                GClass2431 producer;
-                ProductionBuildAbstractClass scheme;
+                ItemsProducerBase producer;
+                BaseHideoutScheme scheme;
                 if (tryFindScheme(hideout, entry.recipeId, out producer, out scheme))
                     queuedPlans.Add(new PlannedScheme((int)producer.AreaType, scheme, false));
             }
@@ -1003,25 +1005,25 @@ namespace CraftQueue
             return true;
         }
 
-        private static List<PlannedScheme> getActivePlans(HideoutClass hideout)
+        private static List<PlannedScheme> getActivePlans(HideoutRepresentation hideout)
         {
             var plans = new List<PlannedScheme>();
             if (hideout == null
                 || hideout.ProductionController == null
-                || hideout.ProductionController.Dictionary_0 == null)
+                || hideout.ProductionController._areaProducers == null)
                 return plans;
 
-            foreach (List<GClass2431> producers in hideout.ProductionController.Dictionary_0.Values)
+            foreach (List<ItemsProducerBase> producers in hideout.ProductionController._areaProducers.Values)
             {
                 if (producers == null)
                     continue;
-                foreach (GClass2431 producer in producers)
+                foreach (ItemsProducerBase producer in producers)
                 {
                     if (producer == null || producer.Schemes == null)
                         continue;
-                    foreach (string recipeId in producer.ProducingItems.Keys.Concat(producer.Dictionary_2.Keys))
+                    foreach (string recipeId in producer.ProducingItems.Keys.Concat(producer._errorItems.Keys))
                     {
-                        ProductionBuildAbstractClass scheme;
+                        BaseHideoutScheme scheme;
                         if (isQueueableScheme(producer, recipeId) && producer.Schemes.TryGetValue(recipeId, out scheme))
                             plans.Add(new PlannedScheme((int)producer.AreaType, scheme, true));
                     }
@@ -1032,26 +1034,26 @@ namespace CraftQueue
         }
 
         private static bool tryFindScheme(
-            HideoutClass hideout,
+            HideoutRepresentation hideout,
             string recipeId,
-            out GClass2431 producer,
-            out ProductionBuildAbstractClass scheme)
+            out ItemsProducerBase producer,
+            out BaseHideoutScheme scheme)
         {
             if (hideout != null
                 && hideout.ProductionController != null
-                && hideout.ProductionController.Dictionary_0 != null)
+                && hideout.ProductionController._areaProducers != null)
             {
-                foreach (List<GClass2431> producers in hideout.ProductionController.Dictionary_0.Values)
+                foreach (List<ItemsProducerBase> producers in hideout.ProductionController._areaProducers.Values)
                 {
                     if (producers == null)
                         continue;
-                    foreach (GClass2431 candidate in producers)
+                    foreach (ItemsProducerBase candidate in producers)
                     {
-                        ProductionBuildAbstractClass found;
+                        BaseHideoutScheme found;
                         if (candidate != null
                             && candidate.Schemes != null
                             && candidate.Schemes.TryGetValue(recipeId, out found)
-                            && found is GClass2440
+                            && found is ProductionScheme
                             && !found.continuous)
                         {
                             producer = candidate;
@@ -1068,14 +1070,14 @@ namespace CraftQueue
         }
 
         private static bool trySelectItems(
-            HideoutClass hideout,
-            ProductionBuildAbstractClass scheme,
-            out List<GClass1433> items,
-            out List<GClass1433> tools,
+            HideoutRepresentation hideout,
+            BaseHideoutScheme scheme,
+            out List<ItemToHandover> items,
+            out List<ItemToHandover> tools,
             out string error)
         {
-            items = new List<GClass1433>();
-            tools = new List<GClass1433>();
+            items = new List<ItemToHandover>();
+            tools = new List<ItemToHandover>();
             error = null;
 
             List<Item> stashItems = hideout.AllStashItems.Where(isUsableRequirementItem).ToList();
@@ -1095,7 +1097,7 @@ namespace CraftQueue
                     if (take <= 0)
                         continue;
 
-                    var selected = new GClass1433(item, take);
+                    var selected = new ItemToHandover(item, take);
                     if (requirement is ToolRequirement)
                         tools.Add(selected);
                     else
@@ -1230,7 +1232,7 @@ namespace CraftQueue
                 this.Logger.LogWarning("the web link is not available yet; the server has not answered.");
                 try
                 {
-                    NotificationManagerClass.DisplayMessageNotification(
+                    NotificationManager.DisplayMessageNotification(
                         "CraftQueue is still connecting to the server - try again in a moment.");
                 }
                 catch
@@ -1278,7 +1280,7 @@ namespace CraftQueue
             {
                 try
                 {
-                    NotificationManagerClass.DisplayMessageNotification(
+                    NotificationManager.DisplayMessageNotification(
                         "the overlay is starting - one moment...");
                 }
                 catch
@@ -1406,7 +1408,7 @@ namespace CraftQueue
 
         private sealed class PlannedScheme
         {
-            public PlannedScheme(int areaType, ProductionBuildAbstractClass scheme, bool isActive)
+            public PlannedScheme(int areaType, BaseHideoutScheme scheme, bool isActive)
             {
                 this.AreaType = areaType;
                 this.Scheme = scheme;
@@ -1414,7 +1416,7 @@ namespace CraftQueue
             }
 
             public int AreaType { get; private set; }
-            public ProductionBuildAbstractClass Scheme { get; private set; }
+            public BaseHideoutScheme Scheme { get; private set; }
             public bool IsActive { get; private set; }
         }
     }

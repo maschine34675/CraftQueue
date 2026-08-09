@@ -11,15 +11,17 @@
     <AssemblyName>maschine-CraftQueue.Client</AssemblyName>
     <Company>https://github.com/maschine34675/CraftQueue</Company>
     <Authors>maschine</Authors>
-    <Version>1.2.2</Version>
-    <AssemblyVersion>1.2.2</AssemblyVersion>
-    <FileVersion>1.2.2</FileVersion>
+    <Version>2.0.0</Version>
+    <AssemblyVersion>2.0.0</AssemblyVersion>
+    <FileVersion>2.0.0</FileVersion>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <LangVersion>latest</LangVersion>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
-    <DeployToSpt Condition="'$(DeployToSpt)' == ''">false</DeployToSpt>
-    <SptRoot Condition="'$(SptRoot)' == ''"></SptRoot>
+    <DeployToSpt Condition="'$(DeployToSpt)' == ''">true</DeployToSpt>
+    <!-- Relativ zur Arbeitskopie: <Install>\Development\CraftQueue\<Teil>\ -> <Install>.
+         Ueberschreibbar mit /p:SptRoot=... -->
+    <SptRoot Condition="'$(SptRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\</SptRoot>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>

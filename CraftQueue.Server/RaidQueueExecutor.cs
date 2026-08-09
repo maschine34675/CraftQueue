@@ -5,6 +5,7 @@ using SPTarkov.Server.Core.Models.Common;
 using System;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace CraftQueue.Server
 {
@@ -18,7 +19,7 @@ namespace CraftQueue.Server
 
         private readonly ConcurrentDictionary<string, long> nextErrorLog = new(StringComparer.Ordinal);
 
-        public Task<bool> OnUpdate(long secondsSinceLastRun)
+        public Task<bool> OnUpdateAsync(long secondsSinceLastRun, CancellationToken cancellationToken)
         {
             if (secondsSinceLastRun < RunIntervalSeconds)
                 return Task.FromResult(false);

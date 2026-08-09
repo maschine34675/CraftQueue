@@ -4,8 +4,9 @@ using SPTarkov.Server.Core.Models.Common;
 using SPTarkov.Server.Core.Models.Eft.Common;
 using SPTarkov.Server.Core.Models.Eft.Common.Tables;
 using SPTarkov.Server.Core.Models.Eft.Hideout;
+using SPTarkov.Server.Core.Models.Eft.ItemEvent;
 using SPTarkov.Server.Core.Models.Eft.Match;
-using SPTarkov.Server.Core.Services;
+using SPTarkov.Server.Core.Services.InRaid;
 using System.Reflection;
 using Xunit;
 
@@ -23,6 +24,7 @@ public sealed class LifecycleRegressionTests
         MethodBase target = (MethodBase)resolver.Invoke(new HideoutStartConfirmationPatch(), null)!;
 
         Assert.Equal(typeof(HideoutCallbacks), target.DeclaringType);
+        Assert.Equal(typeof(ValueTask<ItemEventRouterResponse>), ((MethodInfo)target).ReturnType);
         Assert.Equal(nameof(HideoutCallbacks.SingleProductionStart), target.Name);
         Assert.Equal(
             [typeof(PmcData), typeof(HideoutSingleProductionStartRequestData), typeof(MongoId)],
@@ -39,9 +41,9 @@ public sealed class LifecycleRegressionTests
         MethodBase target = (MethodBase)resolver.Invoke(new LocalRaidStartPatch(), null)!;
 
         Assert.Equal(typeof(LocationLifecycleService), target.DeclaringType);
-        Assert.Equal(nameof(LocationLifecycleService.StartLocalRaid), target.Name);
+        Assert.Equal(nameof(LocationLifecycleService.StartLocalRaidAsync), target.Name);
         Assert.Equal(
-            [typeof(MongoId), typeof(StartLocalRaidRequestData)],
+            [typeof(MongoId), typeof(StartLocalRaidRequestData), typeof(CancellationToken)],
             target.GetParameters().Select(parameter => parameter.ParameterType).ToArray());
     }
 
@@ -55,9 +57,9 @@ public sealed class LifecycleRegressionTests
         MethodBase target = (MethodBase)resolver.Invoke(new LocalRaidEndPatch(), null)!;
 
         Assert.Equal(typeof(LocationLifecycleService), target.DeclaringType);
-        Assert.Equal(nameof(LocationLifecycleService.EndLocalRaid), target.Name);
+        Assert.Equal(nameof(LocationLifecycleService.EndLocalRaidAsync), target.Name);
         Assert.Equal(
-            [typeof(MongoId), typeof(EndLocalRaidRequestData)],
+            [typeof(MongoId), typeof(EndLocalRaidRequestData), typeof(CancellationToken)],
             target.GetParameters().Select(parameter => parameter.ParameterType).ToArray());
     }
 

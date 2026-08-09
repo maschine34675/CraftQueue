@@ -62,7 +62,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $clientDirectory = Join-Path $stageRoot "BepInEx\plugins"
-$serverDirectory = Join-Path $stageRoot "SPT\user\mods\$sptModName"
+# SPT 4.1 renamed the server folder: SPT -> SPT_Runtime. The deploy target was
+# updated with the port, this staging path was not - a zip extracted over the
+# game root would have put the server mod where 4.1 never looks.
+$serverDirectory = Join-Path $stageRoot "SPT_Runtime\user\mods\$sptModName"
 $configDirectory = Join-Path $serverDirectory "config"
 New-Item -ItemType Directory -Path $clientDirectory, $serverDirectory, $configDirectory -Force | Out-Null
 
