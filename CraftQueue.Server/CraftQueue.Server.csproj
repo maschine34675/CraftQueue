@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <Version>2.0.0</Version>
-    <AssemblyVersion>2.0.0</AssemblyVersion>
-    <FileVersion>2.0.0</FileVersion>
+    <Version>2.0.2</Version>
+    <AssemblyVersion>2.0.2</AssemblyVersion>
+    <FileVersion>2.0.2</FileVersion>
     <Company>https://github.com/maschine34675/CraftQueue</Company>
     <Authors>maschine</Authors>
   </PropertyGroup>
@@ -39,6 +39,13 @@
 
   <Target Name="DeployToSpt" AfterTargets="Build" Condition="'$(DeployToSpt)' == 'true'">
     <Error Condition="'$(SptRoot)' == ''" Text="Set SptRoot when DeployToSpt=true." />
+    <!-- A SptRoot that lost its backslash on the way in (bash turns
+         -p:SptRoot=D:\SPT41 into D:SPT41) stays drive-relative and resolves
+         INSIDE this repository, quietly spraying build output into the source
+         tree - it happened twice. Refuse anything that is not a real game
+         root instead of trusting the path. -->
+    <Error Condition="!Exists('$(SptRoot)\EscapeFromTarkov.exe')"
+           Text="SptRoot '$(SptRoot)' is not an SPT installation (no EscapeFromTarkov.exe). A relative or mistyped path would deploy into the repository; pass an absolute path or omit SptRoot to use the default." />
     <PropertyGroup>
       <ServerModDirectory>$(SptRoot)\SPT_Runtime\user\mods\$(SptModName)</ServerModDirectory>
     </PropertyGroup>

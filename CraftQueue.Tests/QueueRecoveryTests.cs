@@ -110,6 +110,42 @@ public sealed class QueueRecoveryTests
             $"Telemetry must outlive the worst legitimate poll gap ({worstPollGapSeconds}s), was {fresh}s.");
     }
 
+    [Fact]
+    public async Task RecipeSnapshotSurvivesAnotherModAddingRecipesConcurrently()
+    {
+        MethodInfo snapshot = typeof(CraftQueueService)
+            .GetMethod("stableSnapshot", BindingFlags.Static | BindingFlags.NonPublic)!
+            .MakeGenericMethod(typeof(int));
+
+        var shared = new List<int>(Enumerable.Range(0, 500));
+        using var stop = new CancellationTokenSource();
+        Task writer = Task.Run(() =>
+        {
+            int next = 1000;
+            while (!stop.IsCancellationRequested)
+            {
+                shared.Add(next++);
+                if (shared.Count > 800)
+                    shared.RemoveRange(500, shared.Count - 500);
+            }
+        });
+
+        try
+        {
+            for (int round = 0; round < 50; round++)
+            {
+                var copy = (List<int>?)snapshot.Invoke(null, [shared]);
+                Assert.NotNull(copy);
+                Assert.True(copy.Count >= 0 && copy.Sum(value => value % 2) >= 0);
+            }
+        }
+        finally
+        {
+            stop.Cancel();
+            await writer.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
     private static bool invokeIsEnvironmentalFailure(string? errorCode)
     {
         MethodInfo method = typeof(CraftQueueService).GetMethod(

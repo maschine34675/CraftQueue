@@ -48,6 +48,7 @@ namespace CraftQueue.Server
         private readonly object recipesJsonLock = new();
         private WebApplication? app;
         private byte[]? cachedRecipesJson;
+        private Dictionary<string, List<RecipeInfo>>? cachedRecipesSource;
         private Task? recipePreloadTask;
         private bool disposed;
         private volatile int listeningPort;
@@ -335,7 +336,12 @@ namespace CraftQueue.Server
         {
             lock (recipesJsonLock)
             {
-                cachedRecipesJson ??= JsonSerializer.SerializeToUtf8Bytes(craftQueueService.GetRecipes(), jsonOptions);
+                Dictionary<string, List<RecipeInfo>> recipes = craftQueueService.GetRecipes();
+                if (cachedRecipesJson == null || !ReferenceEquals(cachedRecipesSource, recipes))
+                {
+                    cachedRecipesJson = JsonSerializer.SerializeToUtf8Bytes(recipes, jsonOptions);
+                    cachedRecipesSource = recipes;
+                }
                 return cachedRecipesJson;
             }
         }

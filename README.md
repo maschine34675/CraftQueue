@@ -99,6 +99,10 @@ The overlay is provided by the **[Anvil-WebOverlay](https://github.com/maschine3
 
 Fika compatibility is verified in a live co-op session: every player gets their own profile-scoped link, queues are strictly per profile, and the plugin is fully inert on a headless host. A raid whose end is never reported (crashed client, headless) is released from server handover automatically after a generous timeout.
 
+## Changelog
+
+Release history in [CHANGELOG.md](CHANGELOG.md).
+
 ## Building
 
 The projects no longer terminate EFT or deploy to a hard-coded installation during an ordinary build.

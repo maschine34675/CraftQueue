@@ -19,6 +19,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CraftQueue.Server
@@ -57,6 +58,7 @@ namespace CraftQueue.Server
         private Dictionary<string, List<RecipeInfo>>? cachedRecipes;
         private Dictionary<string, RecipeInfo>? cachedRecipeLookup;
         private Dictionary<string, HideoutProduction>? cachedProductionLookup;
+        private int cachedRecipeSourceCount = -1;
 
         public QueueOperationResult CreateEnqueueCommand(MongoId sessionId, string recipeId)
         {
@@ -880,15 +882,37 @@ namespace CraftQueue.Server
                 return null;
             }
         }
+        private static List<T>? stableSnapshot<T>(List<T>? source)
+        {
+            if (source == null)
+                return null;
+
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    return new List<T>(source);
+                }
+                catch (InvalidOperationException) when (attempt < 20)
+                {
+                    Thread.Sleep(100);
+                }
+                catch (ArgumentException) when (attempt < 20)
+                {
+                    Thread.Sleep(100);
+                }
+            }
+        }
 
         public Dictionary<string, List<RecipeInfo>> GetRecipes()
         {
             lock (recipeCacheLock)
             {
-                if (cachedRecipes != null)
+                if (cachedRecipes != null
+                    && cachedRecipeSourceCount == (hideoutTable.Production.Recipes?.Count ?? 0))
                     return cachedRecipes;
 
-                List<HideoutProduction>? recipes = hideoutTable.Production.Recipes;
+                List<HideoutProduction>? recipes = stableSnapshot(hideoutTable.Production.Recipes);
                 var result = new Dictionary<string, List<RecipeInfo>>(StringComparer.Ordinal);
                 var lookup = new Dictionary<string, RecipeInfo>(StringComparer.Ordinal);
                 var productionLookup = new Dictionary<string, HideoutProduction>(StringComparer.Ordinal);
@@ -920,9 +944,10 @@ namespace CraftQueue.Server
                         }
 
                         var requirements = new List<RecipeRequirement>();
-                        if (recipe.Requirements != null)
+                        List<Requirement>? recipeRequirements = stableSnapshot(recipe.Requirements);
+                        if (recipeRequirements != null)
                         {
-                            foreach (Requirement requirement in recipe.Requirements)
+                            foreach (Requirement requirement in recipeRequirements)
                             {
                                 if ((requirement.Type != "Item" && requirement.Type != "Tool") || !requirement.TemplateId.HasValue)
                                     continue;
@@ -958,6 +983,7 @@ namespace CraftQueue.Server
                 cachedRecipeLookup = lookup;
                 cachedProductionLookup = productionLookup;
                 cachedRecipes = result;
+                cachedRecipeSourceCount = recipes?.Count ?? 0;
                 return result;
             }
         }
@@ -1177,7 +1203,6 @@ namespace CraftQueue.Server
 
                 try
                 {
-                    eventOutputHolder.ResetOutput(sessionId);
                     _ = hideoutController.TakeProduction(
                         pmcData,
                         new HideoutTakeProductionRequestData
@@ -1277,7 +1302,6 @@ namespace CraftQueue.Server
                 Exception? startError = null;
                 try
                 {
-                    eventOutputHolder.ResetOutput(sessionId);
                     _ = hideoutController.SingleProductionStart(
                         pmcData,
                         new HideoutSingleProductionStartRequestData
