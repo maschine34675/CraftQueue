@@ -124,6 +124,26 @@ Create a clean release archive with:
 .\scripts\New-ReleasePackage.ps1
 ```
 
+### The menu bar icon
+
+`tools\build-icon.py` draws the button's glyph — a hexagon with a work list — to
+`assets\task-bar-icon.png` (needs Pillow), and the client build embeds that PNG in the
+assembly. Run it after changing the drawing; nothing else regenerates it.
+
+Three details in there were paid for in the game rather than in a preview, and both the
+script and `TaskBarButtonPatch` keep them:
+
+- **The colour is baked into the PNG.** The button's animator writes `Image.color` every
+  frame, so tinting from code loses — which is why the gold tint this replaced never
+  showed and the button kept the ivory hideout glyph.
+- **The sprite is scaled to the one it replaces.** An `Image` reports its preferred size
+  as `sprite.rect.width / sprite.pixelsPerUnit`, so a sprite at the default 100
+  pixels-per-unit asks the layout for a much larger glyph — which grows the button and
+  leaves the icon floating in the space that opened up.
+- **Hexagon, not circle, and mip-mapped.** At the ~24 px the bar gives an icon, a curve
+  is all antialiasing and reads as ragged, and filtering one full-size level down to that
+  size adds to it.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

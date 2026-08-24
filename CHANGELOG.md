@@ -7,6 +7,15 @@ commit messages and in `PROJECT-HANDOFF.md`.
 CraftQueue runs in two lines: **2.x targets SPT 4.1**, **1.2.x targets SPT
 4.0.13**. The 4.0 line is frozen and only touched for serious bugs.
 
+## [2.0.3] — SPT 4.1
+
+### Changed
+- The **CRAFT QUEUE** button in the bottom menu bar has its own icon now: a
+  hexagon with a work list, in the muted gold of the bar. Before it showed the
+  hideout glyph it was cloned from, which made it easy to mistake for a second
+  HIDEOUT entry — the gold tint it was supposed to have never survived the
+  button's own animation.
+
 ## [2.0.2] — SPT 4.1
 
 ### Fixed
@@ -100,6 +109,7 @@ First public release.
 - Works around a vanilla SPT 4.0.13 server bug that crashed every hideout craft
   cancellation.
 
+[2.0.3]: https://github.com/maschine34675/CraftQueue/releases/tag/v2.0.3
 [2.0.2]: https://github.com/maschine34675/CraftQueue/releases/tag/v2.0.2
 [2.0.1]: https://github.com/maschine34675/CraftQueue/releases/tag/v2.0.1
 [2.0.0]: https://github.com/maschine34675/CraftQueue/releases/tag/v2.0.0
