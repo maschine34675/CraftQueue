@@ -14,6 +14,7 @@ using SPTarkov.Server.Core.Models.Enums;
 using SPTarkov.Server.Core.Models.Enums.Hideout;
 using SPTarkov.Server.Core.Routers;
 using SPTarkov.Server.Core.Servers;
+using SPTarkov.Server.Core.Services.Ragfair;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -33,6 +34,7 @@ namespace CraftQueue.Server
         HideoutHelper hideoutHelper,
         HideoutController hideoutController,
         EventOutputHolder eventOutputHolder,
+        RagfairPriceService ragfairPriceService,
         SaveServer saveServer,
         ILogger<CraftQueueService> logger)
     {
@@ -903,6 +905,40 @@ namespace CraftQueue.Server
                 }
             }
         }
+        private static void applyEconomics(RecipeInfo info, MongoId endProduct, Func<MongoId, int> getPrice)
+        {
+            long cost = 0;
+            foreach (RecipeRequirement requirement in info.Requirements)
+            {
+                if (requirement.IsTool)
+                    continue;
+                cost += (long)getPrice(new MongoId(requirement.TemplateId)) * Math.Max(1, requirement.Count);
+            }
+
+            int productPrice = getPrice(endProduct);
+            info.MaterialCost = clampToInt(cost);
+            if (productPrice <= 0)
+            {
+                info.ProductValue = 0;
+                info.Profit = 0;
+                info.ProfitPerHour = 0;
+                return;
+            }
+
+            long value = (long)productPrice * Math.Max(1, info.ProductCount);
+            long profit = value - cost;
+
+            info.ProductValue = clampToInt(value);
+            info.Profit = clampToInt(profit);
+            info.ProfitPerHour = info.ProductionTime > 0
+                ? clampToInt(profit * 3600 / info.ProductionTime)
+                : 0;
+        }
+
+        private static int clampToInt(long value)
+        {
+            return (int)Math.Clamp(value, int.MinValue, int.MaxValue);
+        }
 
         public Dictionary<string, List<RecipeInfo>> GetRecipes()
         {
@@ -921,6 +957,24 @@ namespace CraftQueue.Server
                 {
                     Dictionary<MongoId, TemplateItem> items = templateTable.Items;
                     var itemNames = new Dictionary<MongoId, string>();
+                    var itemPrices = new Dictionary<MongoId, int>();
+                    int getPrice(MongoId templateId)
+                    {
+                        if (!itemPrices.TryGetValue(templateId, out int price))
+                        {
+                            try
+                            {
+                                price = (int)Math.Round(ragfairPriceService.GetFleaPriceForItem(templateId));
+                            }
+                            catch
+                            {
+                                price = 0;
+                            }
+                            itemPrices[templateId] = price;
+                        }
+                        return price;
+                    }
+
                     string getItemName(MongoId templateId)
                     {
                         if (!itemNames.TryGetValue(templateId, out string? name))
@@ -962,15 +1016,19 @@ namespace CraftQueue.Server
                             }
                         }
 
+                        int productCount = Math.Max(1, recipe.Count ?? 1);
+                        int productionTime = (int)(recipe.ProductionTime ?? 0);
                         var info = new RecipeInfo
                         {
                             RecipeId = recipe.Id.ToString(),
                             EndProduct = recipe.EndProduct.ToString(),
                             ProductName = getItemName(recipe.EndProduct),
                             AreaType = (int)recipe.AreaType.Value,
-                            ProductionTime = (int)(recipe.ProductionTime ?? 0),
-                            Requirements = requirements
+                            ProductionTime = productionTime,
+                            Requirements = requirements,
+                            ProductCount = productCount
                         };
+                        applyEconomics(info, recipe.EndProduct, getPrice);
                         categoryRecipes.Add(info);
                         lookup[info.RecipeId] = info;
                         productionLookup[info.RecipeId] = recipe;
@@ -1705,7 +1763,7 @@ namespace CraftQueue.Server
                     continue;
 
                 int remaining = requirementCount(requirement);
-                foreach (Item item in getSuitableItems(snapshot, requirement))
+                foreach (Item item in itemsToSpend(snapshot, requirement))
                 {
                     if (remaining <= 0)
                         break;
@@ -1794,6 +1852,15 @@ namespace CraftQueue.Server
             }
             List<Item> stashItems = allItems.Where(isInStash).ToList();
             return new ServerInventorySnapshot(stashItems, allItems, templateTable.Items);
+        }
+        private IEnumerable<Item> itemsToSpend(ServerInventorySnapshot snapshot, Requirement requirement)
+        {
+            return getSuitableItems(snapshot, requirement).OrderBy(preferNonFoundInRaid);
+        }
+
+        private static int preferNonFoundInRaid(Item item)
+        {
+            return item.Upd?.SpawnedInSession == true ? 1 : 0;
         }
 
         private IEnumerable<Item> getSuitableItems(ServerInventorySnapshot snapshot, Requirement requirement)
@@ -2360,6 +2427,11 @@ namespace CraftQueue.Server
         public int AreaType { get; set; }
         public int ProductionTime { get; set; }
         public List<RecipeRequirement> Requirements { get; set; } = [];
+        public int ProductCount { get; set; } = 1;
+        public int MaterialCost { get; set; }
+        public int ProductValue { get; set; }
+        public int Profit { get; set; }
+        public int ProfitPerHour { get; set; }
     }
 
     public sealed class RecipeRequirement

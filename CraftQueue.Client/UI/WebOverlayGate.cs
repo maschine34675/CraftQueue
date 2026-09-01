@@ -6,8 +6,12 @@ namespace CraftQueue.UI
     internal static class WebOverlayGate
     {
         public const string LibraryGuid = "com.anvil.weboverlay";
+        public static readonly Version MinimumVersion = new Version(1, 7, 0);
+
+        private static readonly Version ClickThroughSince = new Version(1, 8, 8);
 
         private static bool? loaded;
+        private static Version foundVersion;
         private static object overlay;
         private static string currentUrl;
         private static volatile bool overlayFailed;
@@ -18,9 +22,28 @@ namespace CraftQueue.UI
             get
             {
                 if (loaded == null)
-                    loaded = BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey(LibraryGuid);
+                {
+                    BepInEx.PluginInfo info;
+                    loaded = BepInEx.Bootstrap.Chainloader.PluginInfos.TryGetValue(LibraryGuid, out info);
+                    if (loaded.Value && info != null && info.Metadata != null)
+                        foundVersion = info.Metadata.Version;
+                }
                 return loaded.Value;
             }
+        }
+        public static Version FoundVersion
+        {
+            get
+            {
+                bool unused = IsLoaded;
+                return foundVersion;
+            }
+        }
+        public static bool IsUsable => IsLoaded && foundVersion != null && foundVersion >= MinimumVersion;
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void letTheMouseThrough(object options)
+        {
+            ((WebOverlay.OverlayOptions)options).ClickThroughWhenUnfocused = true;
         }
         [MethodImpl(MethodImplOptions.NoInlining)]
         public static bool Toggle(string url, bool showFrame, int[] closeKeys, Action<string> logWarning, out bool starting)
@@ -32,13 +55,17 @@ namespace CraftQueue.UI
             var handle = overlay as WebOverlay.IWebOverlay;
             if (handle == null)
             {
+                var options = new WebOverlay.OverlayOptions
+                {
+                    CloseKeys = closeKeys,
+                    Frame = showFrame,
+                    FreeCursorWhileShown = true
+                };
+                if (foundVersion >= ClickThroughSince)
+                    letTheMouseThrough(options);
                 handle = WebOverlay.WebOverlays.Create(
                     "CraftQueue - press F9 or Escape to close",
-                    new WebOverlay.OverlayOptions
-                    {
-                        CloseKeys = closeKeys,
-                        Frame = showFrame
-                    });
+                    options);
                 if (handle == null)
                 {
                     logWarning("overlays are unavailable (is the WebView2 runtime installed?); using the browser.");

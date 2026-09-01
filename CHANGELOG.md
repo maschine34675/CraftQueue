@@ -7,6 +7,41 @@ commit messages and in `PROJECT-HANDOFF.md`.
 CraftQueue runs in two lines: **2.x targets SPT 4.1**, **1.2.x targets SPT
 4.0.13**. The 4.0 line is frozen and only touched for serious bugs.
 
+## [2.2.0] — SPT 4.1
+
+### Added
+- The recipe browser now shows what a craft is **worth**: estimated material
+  cost, what the yield sells for, the profit, and the profit per hour of craft
+  time — so a two-minute craft can be compared with a two-day one. Two new sort
+  orders put the worthwhile recipes on top.
+- Every entry now states **how many items a craft yields** (`×5`, `×120`).
+  That was never visible before; you had to know it. It shows in the queue and
+  on running crafts too, and long names no longer push it out of view.
+- Prices are rough market estimates (flea price, falling back to the handbook).
+  Tools are left out of the cost, because a craft gives them back. Products
+  without a market price — quest items, mostly — show their cost and say so
+  instead of pretending to be a huge loss.
+
+## [2.1.0] — SPT 4.1
+
+### Added
+- Crafts now spend **plain materials before found-in-raid ones** when both would
+  do. FiR items are what quests ask for, so they stay in the stash. Recipes that
+  explicitly require found-in-raid materials are unaffected and still get them.
+
+### Fixed
+- With the in-game panel open you can look around again. The panel covers the
+  middle of the picture, and that is the exact point the game reads mouse
+  movement from while you turn — so the movement went to the panel and the
+  player stood still, with nothing anywhere to say why. The mouse now reaches
+  the game whenever the game is the window in front; click the panel to use it
+  again, or press F9. Needs Anvil-WebOverlay 1.8.8 or newer, and without it the
+  panel behaves as before rather than disappearing.
+- The cursor is released while the panel is in front, so it can be pointed at
+  at all. This needs Anvil-WebOverlay 1.7.0, which is now the minimum for the
+  in-game panel; an older library falls back to the external browser and says
+  so once.
+
 ## [2.0.3] — SPT 4.1
 
 ### Changed
@@ -109,6 +144,9 @@ First public release.
 - Works around a vanilla SPT 4.0.13 server bug that crashed every hideout craft
   cancellation.
 
+[2.0.4]: https://github.com/maschine34675/CraftQueue/releases/tag/v2.0.4
+[2.2.0]: https://github.com/maschine34675/CraftQueue/releases/tag/v2.2.0
+[2.1.0]: https://github.com/maschine34675/CraftQueue/releases/tag/v2.1.0
 [2.0.3]: https://github.com/maschine34675/CraftQueue/releases/tag/v2.0.3
 [2.0.2]: https://github.com/maschine34675/CraftQueue/releases/tag/v2.0.2
 [2.0.1]: https://github.com/maschine34675/CraftQueue/releases/tag/v2.0.1

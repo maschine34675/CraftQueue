@@ -53,7 +53,10 @@ namespace CraftQueue.Server
   .entry.review { border-left-color:var(--orange); }
   .entry.command { border-left-color:var(--muted); }
   .entry-info { min-width:0; flex:1; }
-  .entry-name { overflow:hidden; font-size:.9rem; font-weight:550; text-overflow:ellipsis; white-space:nowrap; }
+  .entry-name { display:flex; align-items:baseline; gap:6px; min-width:0; font-size:.9rem; font-weight:550; }
+  .entry-name > .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .entry-name > .badge,.entry-yield { flex:0 0 auto; }
+  .entry-yield { color:var(--muted); font-size:.8rem; font-weight:600; }
   .entry-meta { margin-top:3px; color:var(--muted); font-size:.74rem; line-height:1.35; }
   .entry-error { margin-top:4px; color:#e1a3a3; font-size:.75rem; }
   .entry-time { min-width:82px; color:var(--blue); font-size:.84rem; text-align:right; }
@@ -68,6 +71,9 @@ namespace CraftQueue.Server
   .recipes-toolbar label { display:flex; align-items:center; gap:7px; }
   .recipes-toolbar select { padding:5px 9px; font-size:.8rem; }
   .reqs { display:flex; flex-wrap:wrap; gap:5px; margin-top:5px; }
+  .econ { display:flex; flex-wrap:wrap; gap:10px; margin-top:4px; font-size:.75rem; color:#918e7e; }
+  .econ .gain { color:#72ba80; }
+  .econ .loss { color:#c96a5f; }
   .req { display:flex; align-items:center; gap:4px; padding:2px 6px; border-radius:4px; background:var(--bg); color:var(--muted); font-size:.69rem; }
   .req.tool { border:1px dashed var(--border); }
   .req.missing { color:var(--red); border:1px solid rgba(192,111,111,.55); }
@@ -120,6 +126,8 @@ namespace CraftQueue.Server
     <select id="sortMode" aria-label="Sort recipes by">
       <option value="name">Name</option>
       <option value="time">Craft time</option>
+      <option value="profit">Profit</option>
+      <option value="profitPerHour">Profit per hour</option>
     </select>
   </label>
 </div>
@@ -245,6 +253,10 @@ async function refresh(){
     if(refreshAgain){refreshAgain=false;void refresh();}
   }
 }
+function yieldTag(recipe){
+  const count=recipe&&recipe.productCount;
+  return count>1?`<span class="entry-yield" title="One craft yields ${count} items">×${count}</span>`:'';
+}
 
 function recipeById(id){
   for(const list of Object.values(recipes))for(const recipe of list)if(recipe.recipeId===id)return recipe;
@@ -275,6 +287,30 @@ function requirementsHtml(requirements,have){
     const amount=known?`${have[index]}/${req.count}`:`×${req.count}`;
     return `<span class="req${req.isTool?' tool':''}${short?' missing':''}">${iconHtml(req.templateId,'item-icon small')}${req.isTool?'🔧 ':''}${esc(req.name)} ${amount}</span>`;
   }).join('')}</div>`;
+}
+function money(value){
+  const rounded=Math.round(Math.abs(value));
+  const text=rounded>=1000000?(rounded/1000000).toFixed(rounded>=10000000?0:1)+'M'
+    :rounded>=1000?Math.round(rounded/1000)+'k'
+    :String(rounded);
+  return (value<0?'-':'')+text+' ₽';
+}
+
+function economicsHtml(recipe){
+  const cost=recipe.materialCost||0,value=recipe.productValue||0;
+  if(!cost&&!value)return '';
+  if(!value)return `<div class="econ">
+    <span title="Estimated material cost, tools excluded">${money(cost)} spent</span>
+    <span title="This product has no flea or handbook price, so no profit can be estimated">no market price</span>
+  </div>`;
+  const profit=recipe.profit||0;
+  const perHour=recipe.profitPerHour||0;
+  const cls=profit<0?'loss':'gain';
+  return `<div class="econ">
+    <span title="Estimated material cost, tools excluded">${money(cost)} → ${money(value)}</span>
+    <span class="${cls}" title="Estimated profit for one craft">${profit>=0?'+':''}${money(profit)}</span>
+    <span class="${cls}" title="Estimated profit per hour of craft time">${perHour>=0?'+':''}${money(perHour)}/h</span>
+  </div>`;
 }
 
 function isCraftable(recipe,have){
@@ -316,7 +352,7 @@ function renderActive(){
     html+=`<div class="entry active">
       ${iconHtml(recipe?.endProduct)}
       <div class="entry-info">
-        <div class="entry-name">${esc(production.productName)}</div>
+        <div class="entry-name"><span class="name">${esc(production.productName)}</span>${yieldTag(recipe)}</div>
         <div class="entry-meta">${esc(areaName(production.areaType))}${esc(paused)}${esc(source)}</div>
       </div>
       <div class="entry-time" data-seconds="${Number(production.timeLeft)||0}" data-rate="${rate}">${rate>0?fmt(production.timeLeft):'Paused'}</div>
@@ -343,7 +379,7 @@ function renderQueue(){
     html+=`<div class="entry ${review?'review':'queued'}">
       ${iconHtml(recipe?.endProduct)}
       <div class="entry-info">
-        <div class="entry-name">${areaCounts[entry.areaType]}. ${esc(recipe?.productName||entry.recipeId)} <span class="badge">${esc(status)}</span></div>
+        <div class="entry-name"><span class="name">${areaCounts[entry.areaType]}. ${esc(recipe?.productName||entry.recipeId)}</span>${yieldTag(recipe)}<span class="badge">${esc(status)}</span></div>
         <div class="entry-meta">${esc(areaName(entry.areaType))} · attempts ${entry.attemptCount||0}${esc(retry)}</div>
         ${entry.lastError?`<div class="entry-error">${esc(entry.lastError)}</div>`:''}
       </div>
@@ -366,7 +402,7 @@ function renderCommands(){
     html+=`<div class="entry command">
       ${iconHtml(recipe?.endProduct)}
       <div class="entry-info">
-        <div class="entry-name">${esc(title)}: ${esc(recipe?.productName||command.recipeId)} <span class="badge">${esc(command.status)}</span></div>
+        <div class="entry-name"><span class="name">${esc(title)}: ${esc(recipe?.productName||command.recipeId)}</span>${yieldTag(recipe)}<span class="badge">${esc(command.status)}</span></div>
         <div class="entry-meta">Delivery attempts ${command.deliveryCount||0}</div>
         ${command.error?`<div class="entry-error">${esc(command.error)}</div>`:''}
       </div>
@@ -424,8 +460,10 @@ function renderRecipes(){
 
   let html='';
   for(const [name,items] of [...groups.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
-    items.sort(sortMode==='time'
-      ?(a,b)=>(a.productionTime-b.productionTime)||a.productName.localeCompare(b.productName)
+    items.sort(
+      sortMode==='time'?(a,b)=>(a.productionTime-b.productionTime)||a.productName.localeCompare(b.productName)
+      :sortMode==='profit'?(a,b)=>((b.profit||0)-(a.profit||0))||a.productName.localeCompare(b.productName)
+      :sortMode==='profitPerHour'?(a,b)=>((b.profitPerHour||0)-(a.profitPerHour||0))||a.productName.localeCompare(b.productName)
       :(a,b)=>a.productName.localeCompare(b.productName));
     const craftableCount=items.filter(recipe=>isCraftable(recipe,availability[recipe.recipeId])).length;
     const countLabel=state.materialAvailability
@@ -443,8 +481,9 @@ function renderRecipes(){
       html+=`<div class="entry${craftable?'':' unavailable'}">
         ${iconHtml(recipe.endProduct)}
         <div class="entry-info">
-          <div class="entry-name">${esc(recipe.productName)}</div>
+          <div class="entry-name"><span class="name">${esc(recipe.productName)}</span>${yieldTag(recipe)}</div>
           <div class="entry-meta">${esc(areaName(recipe.areaType))} · ${fmt(recipe.productionTime)}</div>
+          ${economicsHtml(recipe)}
           ${requirementsHtml(recipe.requirements,have)}
         </div>
         <button class="btn btn-craft" type="button" data-action="enqueue" data-id="${esc(recipe.recipeId)}"${disabled}>Craft</button>

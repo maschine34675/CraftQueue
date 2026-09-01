@@ -11,6 +11,9 @@ Version 1.1.0 targets SPT 4.0.13. Both parts must be installed: the BepInEx clie
 - Live overview of every running craft with product names, icons, remaining time and a paused indicator when the generator is off. The view keeps working while EFT sits in a menu, loads, or is closed entirely (estimated from the saved profile).
 - Full recipe browser with search by product, requirement, category or station - showing exactly the recipes your profile has unlocked.
 - Cancelling a running craft returns its **tools** to the stash (vanilla would silently destroy them). If the stash has no room for them, the cancel is refused instead. Ingredients stay consumed, as in vanilla.
+- Every entry states how many items the craft yields, in the browser, the queue and on running crafts.
+- The recipe browser shows what a craft is worth: estimated material cost, sale value of the yield, profit, and profit per hour of craft time - with sort orders for both. Prices are rough market estimates (flea, falling back to the handbook); tools are not counted as cost because the craft returns them.
+- Crafts spend **plain materials before found-in-raid ones** when either would satisfy a requirement, so the FiR items quests ask for stay in the stash. Recipes that explicitly require found-in-raid materials are unaffected.
 - Queue entries survive server restarts. Interrupted starts become a visible `Needs Review` entry instead of a silent duplicate or loss.
 - Press **F9** in game to open your personal web link in the default browser.
 
@@ -131,7 +134,7 @@ Create a clean release archive with:
 assembly. Run it after changing the drawing; nothing else regenerates it.
 
 Three details in there were paid for in the game rather than in a preview, and both the
-script and `TaskBarButtonPatch` keep them:
+script and `CraftQueueTaskBarButtonPatch` keep them:
 
 - **The colour is baked into the PNG.** The button's animator writes `Image.color` every
   frame, so tinting from code loses — which is why the gold tint this replaced never

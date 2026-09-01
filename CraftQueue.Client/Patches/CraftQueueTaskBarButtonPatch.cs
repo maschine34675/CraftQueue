@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace CraftQueue.Patches
 {
-    internal class TaskBarButtonPatch : ModulePatch
+    internal class CraftQueueTaskBarButtonPatch : ModulePatch
     {
         private const string ButtonName = "CraftQueueTaskBarButton";
         private const string IconResource = "CraftQueue.task-bar-icon.png";
@@ -44,7 +44,7 @@ namespace CraftQueue.Patches
 
             try
             {
-                using (System.IO.Stream stream = typeof(TaskBarButtonPatch).Assembly.GetManifestResourceStream(IconResource))
+                using (System.IO.Stream stream = typeof(CraftQueueTaskBarButtonPatch).Assembly.GetManifestResourceStream(IconResource))
                 {
                     if (stream == null)
                     {

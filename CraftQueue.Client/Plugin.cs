@@ -137,7 +137,7 @@ namespace CraftQueue
 
             try
             {
-                new CraftQueue.Patches.TaskBarButtonPatch().Enable();
+                new CraftQueue.Patches.CraftQueueTaskBarButtonPatch().Enable();
             }
             catch (Exception ex)
             {
@@ -1085,7 +1085,7 @@ namespace CraftQueue
             foreach (ItemRequirement requirement in scheme.RequiredItems)
             {
                 int remaining = Math.Max(1, requirement.IntCount);
-                foreach (Item item in stashItems.Where(requirement.IsSuitableItem))
+                foreach (Item item in candidatesToSpend(stashItems, requirement))
                 {
                     if (remaining <= 0)
                         break;
@@ -1114,6 +1114,15 @@ namespace CraftQueue
             }
 
             return true;
+        }
+        private static IEnumerable<Item> candidatesToSpend(List<Item> stashItems, ItemRequirement requirement)
+        {
+            return stashItems.Where(requirement.IsSuitableItem).OrderBy(preferNonFoundInRaid);
+        }
+
+        private static int preferNonFoundInRaid(Item item)
+        {
+            return item.MarkedAsSpawnedInSession ? 1 : 0;
         }
 
         private static bool isUsableRequirementItem(Item item)
@@ -1264,12 +1273,16 @@ namespace CraftQueue
                 return false;
             }
 
-            if (!CraftQueue.UI.WebOverlayGate.IsLoaded)
+            if (!CraftQueue.UI.WebOverlayGate.IsUsable)
             {
                 if (!this.overlayHintLogged)
                 {
                     this.overlayHintLogged = true;
-                    this.Logger.LogInfo("install the Anvil-WebOverlay library for the in-game overlay; using the browser.");
+                    this.Logger.LogInfo(CraftQueue.UI.WebOverlayGate.IsLoaded
+                        ? "Anvil-WebOverlay " + CraftQueue.UI.WebOverlayGate.FoundVersion
+                            + " is older than " + CraftQueue.UI.WebOverlayGate.MinimumVersion
+                            + "; using the browser."
+                        : "install the Anvil-WebOverlay library for the in-game overlay; using the browser.");
                 }
                 return false;
             }
@@ -1322,7 +1335,7 @@ namespace CraftQueue
 
         private void OnDestroy()
         {
-            if (CraftQueue.UI.WebOverlayGate.IsLoaded)
+            if (CraftQueue.UI.WebOverlayGate.IsUsable)
                 CraftQueue.UI.WebOverlayGate.Shutdown();
         }
         private static string getWebLinkHost()
