@@ -7,6 +7,66 @@ commit messages and in `PROJECT-HANDOFF.md`.
 CraftQueue runs in two lines: **2.x targets SPT 4.1**, **1.2.x targets SPT
 4.0.13**. The 4.0 line is frozen and only touched for serious bugs.
 
+## [Unreleased]
+
+## [2.4.0]
+
+### Forge version notes
+- New: queue Scav Case runs like crafts. Pick the 2,500 / 15,000 / 95,000 rouble, moonshine or intelligence folder case in the recipe browser under "Scav Case". CraftQueue starts the next run as soon as the case is free and collects the loot, during raids too.
+- With the Crafting skill at elite the scav case runs two at once, like every other station. The same kind of run never runs twice at a time.
+- Elite Charisma's discount on the rouble cases is applied, so you pay what the game charges.
+- A running scav case cannot be aborted, just like in the game.
+
+### Added
+- Scav case runs (`scavRecipes`) as queueable recipes at the Scav Case station: shown with their cost per run and "random loot", grouped under "Scav Case".
+- The client starts a run through the game's scav case operation and waits for the server's answer. It spends the payment locally first and rolls it back on failure, as the game's own scav case window does - SPT does not report a partly spent money stack back, which would otherwise leave the client planning with money that is gone.
+- During a raid the server starts runs itself and charges the elite Charisma discount exactly as the game computes it; SPT charges whatever the start request names without checking it against the recipe.
+- A start-confirmation hook for scav case runs, so a queued run gets its start-ledger record and the raid-rollback protection like a craft.
+- The station report includes the scav case, so elite Crafting's second slot is used there as well.
+- Per-profile requirement counts in the state, so affordability in the panel and in the in-raid queue check uses the discounted price.
+
+### Changed
+- Aborting a running scav case is refused: the game offers no abort, and SPT would keep the payment.
+
+## [2.3.0]
+
+### Forge version notes
+- With the Crafting skill at elite, every ordinary hideout station can run two crafts at once. CraftQueue now fills both slots, outside raids and during them. Without elite Crafting nothing changes.
+- The same recipe never runs twice at a time. If the next queued craft is one that is already running, the craft behind it takes the free slot instead of leaving it empty.
+- A second craft that needs a tool the first one is using waits for it instead of failing and retrying.
+- Fixed: queued crafts started during a raid could disappear when another mod put the pre-raid profile back afterwards, as some arena and practice mods do. CraftQueue now notices and returns them to the queue. If it cannot tell whether such a craft may already have finished, it asks you to review it instead of crafting it twice.
+- Fixed: the workbench, medstation and nutrition unit no longer start crafts during a raid while the generator is off. The game itself does not allow that, and the crafts then ran at a crawl.
+- Fixed: a station without power no longer shows its queued craft as "still occupied" and no longer pushes it into slower and slower retries. The entry now says it is waiting for power and starts as soon as the generator runs.
+
+### Added
+- Support for the second production slot per station that elite Crafting grants (`SkillsSettings.Crafting.EliteExtraProductions`). Outside raids the client reports every station's slot count and occupancy straight from the game; during raids the server derives the slot count from the profile's Crafting skill.
+- A station holding two finished crafts has both collected, not only the first.
+
+### Changed
+- A queued craft whose recipe is still running, paused or waiting to be collected is never started over it; the next entry takes the slot instead. SPT would otherwise replace the running craft.
+- An extra slot is only filled with a craft whose tools are in the stash. A failed tool check is repeated at most every 30 seconds.
+- New start refusal `recipe_busy`, retried like a busy station.
+
+### Fixed
+- Crafts the raid executor starts, or that are confirmed while a raid runs, keep their start-ledger record until the raid is over; it is then checked against the final profile. A craft that is gone before it could have finished was rolled back (for example by a mod that restores the pre-raid profile after a match) and returns to the front of the queue; one that may have finished returns as Needs Review. The previous raid is settled before a new one starts, so back-to-back raids cannot resolve a record against a different craft of the same recipe.
+- The raid executor honours a station's `NeedsFuel`: without a running generator nothing starts there, as in the game. The entry waits with a visible reason and no retry penalty.
+- The client refuses a start at an unpowered station as `generator_unavailable` instead of `area_busy`, and reports the game's `CanStart` per station, so the server does not claim entries for such a station at all.
+
+## [2.2.1] — SPT 4.1
+
+### Fixed
+- CraftQueue now notices when another mod changes a hideout recipe while the
+  server is running. **HideoutCraftModifier** does exactly that, and until now
+  its edits were invisible here: the panel kept showing the original craft time,
+  yield and prices until the next server restart. Worse, the have/need numbers
+  next to each ingredient were counted from the *edited* recipe while the
+  ingredient list came from the old one, so a craft could sit greyed out as
+  "not enough materials" with a full stash — or offer itself and then fail.
+- Crafts that cost no materials at all are no longer offered. Only the two
+  continuous producers look like that, and one of them is the bitcoin farm:
+  if a mod turns its payout into an ordinary recipe, starting it through the
+  queue would have wiped the coins the farm was holding.
+
 ## [2.2.0] — SPT 4.1
 
 ### Added

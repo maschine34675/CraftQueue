@@ -6,6 +6,7 @@ using SPTarkov.Server.Core.Models.Eft.Common.Tables;
 using SPTarkov.Server.Core.Models.Eft.Hideout;
 using SPTarkov.Server.Core.Models.Eft.ItemEvent;
 using SPTarkov.Server.Core.Models.Eft.Match;
+using SPTarkov.Server.Core.Models.Enums.Hideout;
 using SPTarkov.Server.Core.Services.InRaid;
 using System.Reflection;
 using Xunit;
@@ -97,7 +98,7 @@ public sealed class LifecycleRegressionTests
         Assert.Contains("entry${craftable?'':' unavailable'}", html);
         Assert.Contains("Not enough materials in the stash.", html);
         Assert.Contains("if(!Array.isArray(have))return true;", html);
-        Assert.Contains("${have[index]}/${req.count}", html);
+        Assert.Contains("${have[index]}/${need}", html);
     }
 
     [Fact]
@@ -224,6 +225,56 @@ public sealed class LifecycleRegressionTests
         var result = (Dictionary<MongoId, int>)held.Invoke(null, [pmcData])!;
 
         Assert.Equal(1, result[leatherman]);
+    }
+
+    [Fact]
+    public void RecipeCacheNoticesEditsThatLeaveTheRecipeCountUnchanged()
+    {
+        MethodInfo fingerprint = typeof(CraftQueueService).GetMethod(
+            "recipeFingerprint",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+
+        long hash(List<HideoutProduction> recipes) => (long)fingerprint.Invoke(null, [recipes])!;
+
+        var recipeId = new MongoId("5d5589c1f934db006d2d5b32");
+        var product = new MongoId("59faff1d86f7746c51718c9c");
+        var material = new MongoId("5449016a4bdc2d6f028b456f");
+        var other = new MongoId("544fb5454bdc2df8738b456a");
+
+        List<HideoutProduction> build(Action<HideoutProduction> edit)
+        {
+            var recipe = new HideoutProduction
+            {
+                Id = recipeId,
+                EndProduct = product,
+                AreaType = HideoutAreas.Workbench,
+                ProductionTime = 3600,
+                Count = 1,
+                Continuous = false,
+                Locked = false,
+                Requirements =
+                [
+                    new Requirement { Type = "Item", TemplateId = material, Count = 2 },
+                    new Requirement { Type = "Tool", TemplateId = other, Count = 1 }
+                ]
+            };
+            edit(recipe);
+            return [recipe];
+        }
+
+        long baseline = hash(build(_ => { }));
+        Assert.Equal(baseline, hash(build(_ => { })));
+        Assert.NotEqual(baseline, hash(build(r => r.ProductionTime = 1800)));
+        Assert.NotEqual(baseline, hash(build(r => r.Count = 5)));
+        Assert.NotEqual(baseline, hash(build(r => r.Continuous = true)));
+        Assert.NotEqual(baseline, hash(build(r => r.Locked = true)));
+        Assert.NotEqual(baseline, hash(build(r => r.Requirements![0].Count = 4)));
+        Assert.NotEqual(baseline, hash(build(r => r.Requirements![0].TemplateId = other)));
+        Assert.NotEqual(baseline, hash(build(r => r.Requirements![0].Type = "Resource")));
+        Assert.NotEqual(baseline, hash(build(r => r.Requirements!.RemoveAt(0))));
+        Assert.NotEqual(baseline, hash(build(r => r.Requirements!.Reverse())));
+        Assert.Equal(0L, (long)fingerprint.Invoke(null, [null])!);
+        Assert.Equal(hash([]), hash([]));
     }
 
     [Fact]

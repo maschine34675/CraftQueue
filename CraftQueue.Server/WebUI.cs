@@ -278,13 +278,19 @@ function activateIcons(root=document){
     },{once:true});
   });
 }
+function needOf(recipe,index){
+  const needs=state.requirementNeeds?.[recipe.recipeId];
+  return Array.isArray(needs)&&typeof needs[index]==='number'?needs[index]:recipe.requirements[index].count;
+}
 
-function requirementsHtml(requirements,have){
+function requirementsHtml(recipe,have){
+  const requirements=recipe.requirements;
   if(!requirements?.length)return '';
   return `<div class="reqs">${requirements.map((req,index)=>{
+    const need=needOf(recipe,index);
     const known=Array.isArray(have)&&typeof have[index]==='number';
-    const short=known&&have[index]<req.count;
-    const amount=known?`${have[index]}/${req.count}`:`×${req.count}`;
+    const short=known&&have[index]<need;
+    const amount=known?`${have[index]}/${need}`:`×${need}`;
     return `<span class="req${req.isTool?' tool':''}${short?' missing':''}">${iconHtml(req.templateId,'item-icon small')}${req.isTool?'🔧 ':''}${esc(req.name)} ${amount}</span>`;
   }).join('')}</div>`;
 }
@@ -298,6 +304,10 @@ function money(value){
 
 function economicsHtml(recipe){
   const cost=recipe.materialCost||0,value=recipe.productValue||0;
+  if(recipe.isScavCase)return `<div class="econ">
+    <span title="What one run costs (before an elite Charisma discount)">${money(cost)} per run</span>
+    <span title="The scav case rolls its loot when you collect it">random loot</span>
+  </div>`;
   if(!cost&&!value)return '';
   if(!value)return `<div class="econ">
     <span title="Estimated material cost, tools excluded">${money(cost)} spent</span>
@@ -315,7 +325,7 @@ function economicsHtml(recipe){
 
 function isCraftable(recipe,have){
   if(!Array.isArray(have))return true;
-  return (recipe.requirements||[]).every((req,index)=>(have[index]??0)>=req.count);
+  return (recipe.requirements||[]).every((req,index)=>(have[index]??0)>=needOf(recipe,index));
 }
 
 function renderClientBanner(){
@@ -343,7 +353,9 @@ function renderActive(){
   let html='<h2>Active Crafts</h2>';
   for(const production of active){
     const recipe=recipeById(production.recipeId);
-    const abortDisabled=state.raidAutomationActive
+    const abortDisabled=recipe?.isScavCase
+      ? ' disabled title="A running scav case cannot be aborted."'
+      : state.raidAutomationActive
       ? ' disabled title="Active crafts cannot be aborted safely during a raid."'
       : (state.clientOnline?'':' disabled title="EFT must be connected to abort a craft."');
     const rate=Number(production.progressRate??1);
@@ -484,7 +496,7 @@ function renderRecipes(){
           <div class="entry-name"><span class="name">${esc(recipe.productName)}</span>${yieldTag(recipe)}</div>
           <div class="entry-meta">${esc(areaName(recipe.areaType))} · ${fmt(recipe.productionTime)}</div>
           ${economicsHtml(recipe)}
-          ${requirementsHtml(recipe.requirements,have)}
+          ${requirementsHtml(recipe,have)}
         </div>
         <button class="btn btn-craft" type="button" data-action="enqueue" data-id="${esc(recipe.recipeId)}"${disabled}>Craft</button>
       </div>`;

@@ -16,6 +16,22 @@ namespace CraftQueue.Server.Models
 
         [JsonPropertyName("recipeIdsHash")]
         public string? RecipeIdsHash { get; set; }
+        [JsonPropertyName("areaSlots")]
+        public List<AreaSlotTelemetry>? AreaSlots { get; set; }
+    }
+
+    public class AreaSlotTelemetry
+    {
+        [JsonPropertyName("areaType")]
+        public int AreaType { get; set; }
+        [JsonPropertyName("capacity")]
+        public int Capacity { get; set; } = 1;
+        [JsonPropertyName("occupied")]
+        public int Occupied { get; set; }
+        [JsonPropertyName("canStart")]
+        public bool CanStart { get; set; } = true;
+        [JsonPropertyName("completedRecipeIds")]
+        public List<string> CompletedRecipeIds { get; set; } = [];
     }
 
     public class ActiveProductionTelemetry

@@ -55,5 +55,9 @@ namespace CraftQueue.Server.Models
         public long Sequence { get; set; }
         [JsonPropertyName("confirmedAt")]
         public long ConfirmedAt { get; set; }
+        [JsonPropertyName("raidStart")]
+        public bool RaidStart { get; set; }
+        [JsonPropertyName("productionSeconds")]
+        public double ProductionSeconds { get; set; }
     }
 }

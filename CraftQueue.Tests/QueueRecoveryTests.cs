@@ -38,6 +38,7 @@ public sealed class QueueRecoveryTests
 
     [Theory]
     [InlineData("area_busy")]
+    [InlineData("recipe_busy")]
     [InlineData("generator_unavailable")]
     [InlineData("executor_changed")]
     public void TransientClientFailuresAreTreatedAsEnvironmental(string errorCode)

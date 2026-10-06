@@ -273,6 +273,7 @@ namespace CraftQueue
             {
                 profileId = RequestHandler.SessionId,
                 productions = buildTelemetry(hideout),
+                areaSlots = buildAreaSlots(hideout),
                 availableRecipeIds = sendList ? availableRecipeIds : null,
                 recipeIdsHash
             };
@@ -346,18 +347,24 @@ namespace CraftQueue
                 await this.ack(claim.queueId, false, "recipe_unavailable", "Recipe is not available in the local hideout.");
                 return;
             }
-
-            if (producer.ProducingItems.Count > 0
-                || producer._errorItems.Count > 0
-                || producer.HasCompletedItems
-                || !producer.CanStart
-                || !producer.CanStartByProductionCount())
+            if (isRecipeOccupied(producer, claim.recipeId))
+            {
+                await this.ack(claim.queueId, false, "recipe_busy", "This recipe is still running or waiting to be collected.");
+                return;
+            }
+            if (!producer.CanStart)
+            {
+                await this.ack(claim.queueId, false, "generator_unavailable", "This station needs a running generator to craft.");
+                return;
+            }
+            if (!producer.CanStartByProductionCount()
+                || occupiedSlots(producer) >= producer.MaxProducingItems)
             {
                 await this.ack(claim.queueId, false, "area_busy", "The hideout area is still occupied.");
                 return;
             }
-
-            if (!producer.CanStartScheme((ProductionScheme)scheme))
+            ProductionScheme production = scheme as ProductionScheme;
+            if (production != null && !producer.CanStartScheme(production))
             {
                 await this.ack(claim.queueId, false, "generator_unavailable", "The generator requirements are not currently met.");
                 return;
@@ -372,13 +379,34 @@ namespace CraftQueue
                 return;
             }
 
+            IEnumerable<IItemOperationResult> spent = null;
             try
             {
-                hideout._session.StartSingleProduction(scheme._id, items, tools);
+                if (scheme is ScavCaseScheme)
+                {
+                    spent = hideout.RemoveSpentItems(items.Concat(tools));
+                    IResult result = await hideout._session.StartScavCaseProduction(scheme._id, items, tools);
+                    if (result == null || result.Failed)
+                    {
+                        if (spent != null)
+                            spent.RollBack();
+                        spent = null;
+                        await this.ack(claim.queueId, false, "start_exception",
+                            "The game rejected the scav case start: " + (result == null ? "no answer" : result.Error));
+                        return;
+                    }
+                    spent = null;
+                }
+                else
+                {
+                    hideout._session.StartSingleProduction(scheme._id, items, tools);
+                }
                 producer.StartProducing(scheme);
             }
             catch (Exception ex)
             {
+                if (spent != null)
+                    spent.RollBack();
                 await this.ack(claim.queueId, false, "start_exception", "The game rejected the start: " + ex.Message);
                 return;
             }
@@ -638,47 +666,98 @@ namespace CraftQueue
                 {
                     if (producer == null || producer.CompleteItemsStorage == null || producer.Schemes == null)
                         continue;
-
-                    string areaRetryKey = "area:" + (int)producer.AreaType;
-                    float areaRetryAt;
-                    if (this.collectRetryAt.TryGetValue(areaRetryKey, out areaRetryAt)
-                        && Time.realtimeSinceStartup < areaRetryAt)
+                    if (producer.CompleteItemsStorage.CompleteItemsCount <= 0)
                         continue;
-
-                    try
+                    foreach (string recipeId in producer.Schemes.Keys.ToList())
                     {
-                        string recipeId = producer.CompleteItemsStorage.FindCompleteItems().Item1;
-                        if (string.IsNullOrEmpty(recipeId))
-                            continue;
                         float retryAt;
                         if (this.collectRetryAt.TryGetValue(recipeId, out retryAt) && Time.realtimeSinceStartup < retryAt)
                             continue;
 
-                        BaseHideoutScheme scheme;
-                        if (!producer.Schemes.TryGetValue(recipeId, out scheme) || scheme.continuous)
-                            continue;
-                        if (!isSameExecutor(hideout, executor))
-                            return;
-
-                        bool collected = await hideout.GetProducedItems(producer, recipeId, false);
-                        if (collected)
+                        try
                         {
-                            producer.GetItems(recipeId);
-                            this.collectRetryAt.Remove(recipeId);
-                            this.collectRetryAt.Remove(areaRetryKey);
+                            if (producer.CompleteItemsStorage.GetItemsCount(recipeId) <= 0)
+                                continue;
+                            BaseHideoutScheme scheme;
+                            if (!producer.Schemes.TryGetValue(recipeId, out scheme) || scheme.continuous)
+                                continue;
+                            if (!isSameExecutor(hideout, executor))
+                                return;
+
+                            bool collected = await hideout.GetProducedItems(producer, recipeId, false);
+                            if (collected)
+                            {
+                                producer.GetItems(recipeId);
+                                this.collectRetryAt.Remove(recipeId);
+                            }
+                            else
+                            {
+                                this.collectRetryAt[recipeId] = Time.realtimeSinceStartup + CollectRetryInterval;
+                            }
                         }
-                        else
+                        catch (Exception ex)
                         {
                             this.collectRetryAt[recipeId] = Time.realtimeSinceStartup + CollectRetryInterval;
+                            this.Logger.LogWarning("collecting a completed production will retry in 60 seconds (" + ex.Message + ").");
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        this.collectRetryAt[areaRetryKey] = Time.realtimeSinceStartup + CollectRetryInterval;
-                        this.Logger.LogWarning("collecting a completed production will retry in 60 seconds (" + ex.Message + ").");
                     }
                 }
             }
+        }
+        private static int occupiedSlots(ItemsProducerBase producer)
+        {
+            int running = producer.ProducingItems.Count(pair => pair.Value == null
+                || !pair.Value.IsCodeProducer
+                || !pair.Value.AvailableForFinish);
+            int completed = producer.CompleteItemsStorage == null ? 0 : producer.CompleteItemsStorage.CompleteItemsCount;
+            return running + producer._errorItems.Count + completed;
+        }
+
+        private static bool isRecipeOccupied(ItemsProducerBase producer, string recipeId)
+        {
+            return producer.ProducingItems.ContainsKey(recipeId)
+                || producer._errorItems.ContainsKey(recipeId)
+                || (producer.CompleteItemsStorage != null && producer.CompleteItemsStorage.GetItemsCount(recipeId) > 0);
+        }
+        private List<object> buildAreaSlots(HideoutRepresentation hideout)
+        {
+            var slots = new List<object>();
+            if (hideout == null
+                || hideout.ProductionController == null
+                || hideout.ProductionController._areaProducers == null)
+                return slots;
+
+            foreach (List<ItemsProducerBase> producers in hideout.ProductionController._areaProducers.Values)
+            {
+                if (producers == null)
+                    continue;
+                foreach (ItemsProducerBase producer in producers)
+                {
+                    if (!(producer is ItemsProducer || producer is ScavCaseProducer) || producer.Schemes == null)
+                        continue;
+
+                    var completed = new List<string>();
+                    if (producer.CompleteItemsStorage != null && producer.CompleteItemsStorage.CompleteItemsCount > 0)
+                    {
+                        foreach (string recipeId in producer.Schemes.Keys)
+                        {
+                            if (producer.CompleteItemsStorage.GetItemsCount(recipeId) > 0)
+                                completed.Add(recipeId);
+                        }
+                    }
+
+                    slots.Add(new
+                    {
+                        areaType = (int)producer.AreaType,
+                        capacity = producer.MaxProducingItems,
+                        occupied = occupiedSlots(producer),
+                        canStart = producer.CanStart,
+                        completedRecipeIds = completed
+                    });
+                }
+            }
+
+            return slots;
         }
 
         private List<object> buildTelemetry(HideoutRepresentation hideout)
@@ -787,8 +866,13 @@ namespace CraftQueue
         {
             BaseHideoutScheme scheme;
             return producer.Schemes.TryGetValue(recipeId, out scheme)
-                && scheme is ProductionScheme
-                && !scheme.continuous;
+                && isQueueableSchemeType(scheme);
+        }
+        private static bool isQueueableSchemeType(BaseHideoutScheme scheme)
+        {
+            if (scheme is ScavCaseScheme)
+                return true;
+            return scheme is ProductionScheme && !scheme.continuous;
         }
 
         private static ProductionData lookupSnapshot(
@@ -836,7 +920,7 @@ namespace CraftQueue
                         continue;
                     foreach (BaseHideoutScheme scheme in producer.Schemes.Values)
                     {
-                        if (scheme is ProductionScheme && !scheme.continuous && !scheme.locked)
+                        if (isQueueableSchemeType(scheme) && !scheme.locked)
                             recipeIds.Add(scheme._id);
                     }
                 }
@@ -1053,8 +1137,7 @@ namespace CraftQueue
                         if (candidate != null
                             && candidate.Schemes != null
                             && candidate.Schemes.TryGetValue(recipeId, out found)
-                            && found is ProductionScheme
-                            && !found.continuous)
+                            && isQueueableSchemeType(found))
                         {
                             producer = candidate;
                             scheme = found;

@@ -7,6 +7,8 @@ Version 1.1.0 targets SPT 4.0.13. Both parts must be installed: the BepInEx clie
 ## Features
 
 - Queue any number of crafts per station; each station works through its queue in order, across all stations in parallel.
+- **Scav case runs** can be queued like crafts: the 2,500 / 15,000 / 95,000 rouble, moonshine and intelligence folder cases. CraftQueue starts the next run as soon as the case is free and collects the loot. Elite Charisma's discount on the rouble cases is applied.
+- With the Crafting skill at elite, each ordinary station runs **two crafts at once** and the queue fills both slots. The same recipe never runs twice at a time: if the next entry is a craft that is already running, the one behind it takes the free slot. A craft whose tool is inside the running craft waits for it.
 - Finished crafts are collected automatically and the next queued craft starts on its own - also **while you are in a raid**, where the server takes over the queue.
 - Live overview of every running craft with product names, icons, remaining time and a paused indicator when the generator is off. The view keeps working while EFT sits in a menu, loads, or is closed entirely (estimated from the saved profile).
 - Full recipe browser with search by product, requirement, category or station - showing exactly the recipes your profile has unlocked.
@@ -21,7 +23,9 @@ CraftQueue also repairs a vanilla SPT 4.0.13 defect that makes every hideout cra
 
 ## Limitations
 
-- Continuous productions (water collector, bitcoin farm), the scav case and the cultist circle are not queueable and are left untouched.
+- Continuous productions (water collector, bitcoin farm) and the cultist circle are not queueable and are left untouched.
+- A scav case run whose loot does not fit into the stash stays uncollected and keeps its slot until you make room and collect it.
+- A running scav case cannot be aborted, as in the game itself.
 - Outside raids the queue advances only while EFT is running, because all inventory changes go through the real client (see the safety model below). Crafts that finish while EFT is closed are collected at the next start.
 - Active crafts cannot be aborted during a raid.
 
@@ -108,18 +112,40 @@ Release history in [CHANGELOG.md](CHANGELOG.md).
 
 ## Building
 
-The projects no longer terminate EFT or deploy to a hard-coded installation during an ordinary build.
+Build and test with:
 
 ```powershell
 dotnet build CraftQueue.slnx -c Release
 dotnet test CraftQueue.Tests\CraftQueue.Tests.csproj -c Release
 ```
 
-An explicit local deployment is available by passing both properties:
+An ordinary build deploys. Both projects default `DeployToSpt` to `true` and derive `SptRoot`
+from the repository's own location, which assumes the working copy sits at
+`<SPT install>\Development\CraftQueue`. The client assembly is copied to
+`<SptRoot>\BepInEx\plugins`, the server assembly and its config to
+`<SptRoot>\SPT_Runtime\user\mods\CraftQueue`. The build never terminates EFT, so close the
+game and the SPT server yourself before building; otherwise the copy hits a file the running
+process holds open.
+
+To build without writing into any installation:
 
 ```powershell
-dotnet build CraftQueue.slnx -c Debug -p:DeployToSpt=true -p:SptRoot=C:\Path\To\SPT
+dotnet build CraftQueue.slnx -c Release -p:DeployToSpt=false
 ```
+
+To deploy into an installation somewhere else, pass an absolute path:
+
+```powershell
+dotnet build CraftQueue.slnx -c Release -p:SptRoot=C:\Path\To\SPT
+```
+
+`SptRoot` must contain `EscapeFromTarkov.exe` or the build stops with an error, so a mistyped
+or drive-relative path cannot quietly deploy into the source tree. An existing server config
+is left alone unless you pass `-p:OverwriteSptConfig=true`.
+
+Note that MSBuild skips a project that is already up to date, and skipping the project skips
+the deployment with it. After changing nothing but the target installation, force the copy
+with `-t:Rebuild`.
 
 Create a clean release archive with:
 

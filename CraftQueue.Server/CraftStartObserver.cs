@@ -31,9 +31,11 @@ namespace CraftQueue.Server
         public Task OnLoadAsync(CancellationToken cancellationToken)
         {
             HideoutStartConfirmationPatch.Configure(craftQueueService, logger);
+            ScavCaseStartConfirmationPatch.Configure(craftQueueService, logger);
             LocalRaidStartPatch.Configure(craftQueueService, logger);
             LocalRaidEndPatch.Configure(craftQueueService, logger);
             new HideoutStartConfirmationPatch().Enable();
+            new ScavCaseStartConfirmationPatch().Enable();
             new LocalRaidStartPatch().Enable();
             new LocalRaidEndPatch().Enable();
             logger.LogInformation("[CraftQueue] Installed production confirmation and raid handover hooks.");
@@ -94,6 +96,49 @@ namespace CraftQueue.Server
             catch (Exception ex)
             {
                 logger?.LogError(ex, "[CraftQueue] Failed to reconcile a successful hideout start request.");
+            }
+        }
+    }
+    public sealed class ScavCaseStartConfirmationPatch : AbstractPatch
+    {
+        private static CraftQueueService? craftQueueService;
+        private static ILogger<CraftStartObserver>? logger;
+
+        public static void Configure(
+            CraftQueueService service,
+            ILogger<CraftStartObserver> observerLogger)
+        {
+            craftQueueService = service;
+            logger = observerLogger;
+        }
+
+        protected override MethodBase GetTargetMethod()
+        {
+            return typeof(HideoutCallbacks).GetMethod(
+                nameof(HideoutCallbacks.ScavCaseProductionStart),
+                [
+                    typeof(SPTarkov.Server.Core.Models.Eft.Common.PmcData),
+                    typeof(HideoutScavCaseStartRequestData),
+                    typeof(MongoId)
+                ])!;
+        }
+
+        [PatchPostfix]
+        public static void Postfix(
+            HideoutScavCaseStartRequestData request,
+            MongoId sessionID,
+            ValueTask<ItemEventRouterResponse> __result)
+        {
+            if (__result.Result?.Warnings?.Count > 0)
+                return;
+
+            try
+            {
+                craftQueueService?.ConfirmStarted(sessionID, request.RecipeId.ToString());
+            }
+            catch (Exception ex)
+            {
+                logger?.LogError(ex, "[CraftQueue] Failed to reconcile a successful scav case start request.");
             }
         }
     }
