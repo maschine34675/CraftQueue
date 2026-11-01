@@ -41,6 +41,7 @@ public sealed class QueueRecoveryTests
     [InlineData("recipe_busy")]
     [InlineData("generator_unavailable")]
     [InlineData("executor_changed")]
+    [InlineData("station_not_built")]
     public void TransientClientFailuresAreTreatedAsEnvironmental(string errorCode)
     {
         Assert.True(invokeIsEnvironmentalFailure(errorCode));

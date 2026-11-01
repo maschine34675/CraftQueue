@@ -9,6 +9,33 @@ CraftQueue runs in two lines: **2.x targets SPT 4.1**, **1.2.x targets SPT
 
 ## [Unreleased]
 
+## [2.4.3]
+
+### Forge version notes
+- If the queue gets stuck because the game or the server stops answering, CraftQueue now writes a warning to the BepInEx log after 60 seconds that names the step it is waiting on, and a note once it continues. That log line shows where the problem is, for example when another mod blocks the game's connection to the server.
+
+### Added
+- A stall warning in the client. One queue cycle (collect, poll, web commands, start) runs at a time, and EFT's own hideout calls as well as SPT's backend route have no deadline of CraftQueue's: SPT's client allows 100 s per try, with retries. A call that never returns paused the queue without a trace. After 60 s the client now logs a warning with the current step (for example "waiting for the game to hand over the finished craft …") and an info line with the duration once the cycle finishes. Behaviour is unchanged otherwise: the waiting cycle is not abandoned, since a second cycle beside it could start the same craft twice.
+
+## [2.4.2]
+
+### Forge version notes
+- Fixed: with some quest mods installed, the server log showed "Failed to prepare the crafting recipe cache at startup. Collection was modified" during startup. CraftQueue now waits until every mod has finished loading before it prepares its recipe list, so it no longer reads another mod's quest texts while that mod is still adding them.
+
+### Fixed
+- The recipe cache warmup started while SPT was still loading the remaining mods. Reading item names builds SPT's cached locale table and runs the locale transformers other mods registered (custom quests through SPT's `CustomQuestService`, which reads the quest mod's own dictionary). A quest mod that was still filling that dictionary made the warmup fail. In other timings, the locale table could also be cached before such a mod's texts were complete. The warmup now starts on the server's first update tick, after every mod's `OnLoad`. Item names in the recipe list are then complete for items that mods add late, too.
+- CraftQueue's web server is already up during that load phase. Until the first update tick its API now answers "CraftQueue is still starting." (HTTP 503), so opening the page within the first seconds cannot build the recipe list early either. The page retries by itself.
+
+## [2.4.1]
+
+### Forge version notes
+- Fixed: the Scav Case runs and the booze generator's moonshine were offered before you had built that station, and a queued scav case run even started there. The recipe browser now only lists stations you have built.
+- Entries queued for a station you have not built yet now wait with the note "Waiting for construction" and start once you build it.
+
+### Fixed
+- Unbuilt stations offered recipes. EFT lists a recipe that names no level of its own station under level 0, which covers all five scav case runs and the booze generator's moonshine. The client only left out quest-locked recipes, and neither of SPT's start operations checks the station, so such a run really started and paid out. The client now skips stations below level 1 for the recipe list, for queueing and before starting.
+- The server holds an entry whose station the profile has not built (or not upgraded far enough) instead of handing it out or starting it during a raid, and refuses to queue one. Runs that already started at such a station are still shown and collected.
+
 ## [2.4.0]
 
 ### Forge version notes

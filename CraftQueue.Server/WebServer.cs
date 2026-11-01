@@ -52,6 +52,7 @@ namespace CraftQueue.Server
         private Task? recipePreloadTask;
         private bool disposed;
         private volatile int listeningPort;
+        private volatile bool modsLoaded;
         public ClientChannelInfo GetChannelInfo(MongoId sessionId)
         {
             return new ClientChannelInfo
@@ -103,7 +104,12 @@ namespace CraftQueue.Server
                 logger.LogError(ex,
                     "[CraftQueue] Failed to start the web server. Set a free \"webPort\" in config/config.json if the port is already taken; EFT keeps working through the SPT backend meanwhile.");
             }
-
+        }
+        public void StartRecipeWarmup()
+        {
+            modsLoaded = true;
+            if (recipePreloadTask != null)
+                return;
             logger.LogInformation("[CraftQueue] Preparing the crafting recipe cache in the background...");
             recipePreloadTask = Task.Run(preloadRecipes);
         }
@@ -143,6 +149,13 @@ namespace CraftQueue.Server
                 if (!isSameOriginMutation(context.Request))
                 {
                     await writeText(context, StatusCodes.Status403Forbidden, "Cross-origin request rejected.");
+                    return;
+                }
+
+                if (!modsLoaded && context.Request.Path.StartsWithSegments("/api"))
+                {
+                    context.Response.Headers.RetryAfter = "2";
+                    await writeText(context, StatusCodes.Status503ServiceUnavailable, "CraftQueue is still starting.");
                     return;
                 }
 

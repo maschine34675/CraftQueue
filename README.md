@@ -106,6 +106,15 @@ The overlay is provided by the **[Anvil-WebOverlay](https://github.com/maschine3
 
 Fika compatibility is verified in a live co-op session: every player gets their own profile-scoped link, queues are strictly per profile, and the plugin is fully inert on a headless host. A raid whose end is never reported (crashed client, headless) is released from server handover automatically after a generous timeout.
 
+### Playing with friends (Fika or a shared server)
+
+The web interface has its own port, **TCP 38473**, separate from SPT's port. Each player's game opens it at the same address it uses for the SPT server, so that port must be reachable from every player's PC:
+
+- Allow inbound **TCP 38473** in the firewall of the server machine.
+- For players outside your home network, also **forward TCP 38473** on your router to the server machine, the same way as SPT's own port.
+
+If the port is blocked, the queue itself keeps working through the SPT backend, but the web interface and the F9 overlay do not load for those players ("took too long to respond"). With a different `webPort` (see [Configuration](#configuration)), open that port instead.
+
 ## Changelog
 
 Release history in [CHANGELOG.md](CHANGELOG.md).

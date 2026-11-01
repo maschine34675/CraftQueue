@@ -19,7 +19,7 @@ namespace CraftQueue.WebViewProbe
     /// Every step writes both a log line and a stamp file, so a hard native
     /// crash still tells us which step was running when it happened.
     /// </summary>
-    [BepInPlugin("com.maschine.CraftQueue.WebViewProbe", "CraftQueue WebView2 Probe", "2.4.0")]
+    [BepInPlugin("com.maschine.CraftQueue.WebViewProbe", "CraftQueue WebView2 Probe", "2.4.3")]
     public class Probe : BaseUnityPlugin
     {
         private const string StageFileName = "craftqueue-webview2-probe.txt";

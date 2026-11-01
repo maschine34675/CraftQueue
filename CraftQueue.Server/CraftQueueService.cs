@@ -61,6 +61,8 @@ namespace CraftQueue.Server
         private const int RaidOutcomeSettleSeconds = 5;
 
         private const string StationPowerMessage = "Waiting for power: this station needs a running generator to craft.";
+        private const string StationNotBuiltMessage = "Waiting for construction: this station has not been built yet.";
+        private const string StationNotReadyError = "This recipe needs a station level you have not built yet.";
         private const int MaximumStationSlots = 8;
 
         private readonly ConcurrentDictionary<string, SessionRuntime> sessions = new(StringComparer.Ordinal);
@@ -93,6 +95,8 @@ namespace CraftQueue.Server
                     return QueueOperationResult.Fail("The selected profile is not connected to the CraftQueue client.");
                 if (!runtime.Telemetry!.AvailableRecipeIds.Contains(recipeId))
                     return QueueOperationResult.Fail("This recipe is not available for the selected profile.");
+                if (!stationReadyFor(sessionId, recipeId))
+                    return QueueOperationResult.Fail(StationNotReadyError);
                 if (countQueueEntries(craftQueueStore.Get(sessionId)) >= MaximumQueueEntries)
                     return QueueOperationResult.Fail($"The queue limit of {MaximumQueueEntries} entries has been reached.");
 
@@ -192,6 +196,7 @@ namespace CraftQueue.Server
                 long now = unixNow();
                 bool needRecipeIds = false;
                 HashSet<string> availableRecipeIds;
+                bool recipeListKnown;
                 if (request.AvailableRecipeIds != null)
                 {
                     availableRecipeIds = request.AvailableRecipeIds
@@ -200,16 +205,19 @@ namespace CraftQueue.Server
                         .Take(MaximumAvailableRecipes)
                         .ToHashSet(StringComparer.Ordinal);
                     runtime.RecipeIdsHash = request.RecipeIdsHash;
+                    recipeListKnown = true;
                 }
                 else if (!string.IsNullOrEmpty(request.RecipeIdsHash)
                     && request.RecipeIdsHash == runtime.RecipeIdsHash
                     && runtime.Telemetry != null)
                 {
                     availableRecipeIds = runtime.Telemetry.AvailableRecipeIds;
+                    recipeListKnown = runtime.Telemetry.RecipeListKnown;
                 }
                 else
                 {
                     availableRecipeIds = runtime.Telemetry?.AvailableRecipeIds ?? new HashSet<string>(StringComparer.Ordinal);
+                    recipeListKnown = runtime.Telemetry?.RecipeListKnown == true;
                     needRecipeIds = true;
                 }
 
@@ -218,7 +226,8 @@ namespace CraftQueue.Server
                     ReceivedAt = now,
                     Productions = sanitizeProductions(request.Productions),
                     AreaSlots = sanitizeAreaSlots(request.AreaSlots),
-                    AvailableRecipeIds = availableRecipeIds
+                    AvailableRecipeIds = availableRecipeIds,
+                    RecipeListKnown = recipeListKnown
                 };
 
                 cleanupRuntime(runtime, now);
@@ -858,7 +867,7 @@ namespace CraftQueue.Server
                     craftQueueStore.Set(sessionId);
 
                 bool online = hasFreshTelemetry(runtime, now);
-                bool recipesKnown = runtime.Telemetry?.AvailableRecipeIds.Count > 0;
+                bool recipesKnown = runtime.Telemetry?.RecipeListKnown == true;
                 List<ActiveProductionView> active;
                 bool profileView = false;
                 if (online && !runtime.InRaid)
@@ -1412,8 +1421,10 @@ namespace CraftQueue.Server
             string recipeId,
             long now)
         {
-            if (runtime.Telemetry?.AvailableRecipeIds.Contains(recipeId) != true)
+            if (runtime.Telemetry?.RecipeListKnown != true)
                 return QueueOperationResult.Fail("The recipe list for this profile was not loaded before the raid.");
+            if (!runtime.Telemetry.AvailableRecipeIds.Contains(recipeId))
+                return QueueOperationResult.Fail("This recipe is not available for the selected profile.");
 
             CraftQueueData data = craftQueueStore.Get(sessionId);
             if (countQueueEntries(data) >= MaximumQueueEntries)
@@ -1430,6 +1441,8 @@ namespace CraftQueue.Server
                 return QueueOperationResult.Fail("The selected profile is unavailable: " + ex.Message);
             }
 
+            if (!stationReadyFor(sessionId, recipeId))
+                return QueueOperationResult.Fail(StationNotReadyError);
             if (!tryValidateProjectedRequirements(pmcData, data, recipeId, out string? error))
                 return QueueOperationResult.Fail(error ?? "The required items are not available.");
 
@@ -1715,6 +1728,16 @@ namespace CraftQueue.Server
                         entry.UpdatedAt = now;
                         craftQueueStore.Set(sessionId);
                         changed = true;
+                        break;
+                    }
+                    string? notReady = stationLevelBlock(pmcData.Hideout?.Areas, area, requiredStationLevel(recipe));
+                    if (notReady != null)
+                    {
+                        if (noteWaiting(entry, notReady, now))
+                        {
+                            craftQueueStore.Set(sessionId);
+                            changed = true;
+                        }
                         break;
                     }
                     if (!generatorOn && needPower.Contains(area))
@@ -2407,7 +2430,7 @@ namespace CraftQueue.Server
 
         private static bool isEnvironmentalFailure(string? errorCode)
         {
-            return errorCode is "area_busy" or "recipe_busy" or "generator_unavailable" or "executor_changed";
+            return errorCode is "area_busy" or "recipe_busy" or "generator_unavailable" or "executor_changed" or "station_not_built";
         }
 
         private static int retryDelaySeconds(int attemptCount)
@@ -2479,6 +2502,24 @@ namespace CraftQueue.Server
                 candidate,
                 now,
                 () => hasToolsInStash(() => stash ??= createInventorySnapshot(getPmcData(sessionId)), candidate.RecipeId));
+            List<BotHideoutArea>? stations = null;
+            bool stationsRead = false;
+            List<BotHideoutArea>? readStations()
+            {
+                if (!stationsRead)
+                {
+                    stationsRead = true;
+                    try
+                    {
+                        stations = getPmcData(sessionId).Hideout?.Areas;
+                    }
+                    catch (Exception)
+                    {
+                        stations = null;
+                    }
+                }
+                return stations;
+            }
 
             foreach ((HideoutAreas area, LinkedList<QueuedProductionRequest> queue) in data.AreaQueues.OrderBy(pair => (int)pair.Key))
             {
@@ -2495,6 +2536,15 @@ namespace CraftQueue.Server
                 QueuedProductionRequest? entry = pickNextForStation(queue, capacity, occupied, busyRecipes, now, toolsFree);
                 if (entry == null)
                     continue;
+                HideoutProduction? production = getProductionRecipe(entry.RecipeId);
+                string? notReady = production == null
+                    ? null
+                    : stationLevelBlock(readStations(), area, requiredStationLevel(production));
+                if (notReady != null)
+                {
+                    changed |= noteWaiting(entry, notReady, now);
+                    continue;
+                }
                 if (slot != null && !slot.CanStart)
                 {
                     changed |= noteWaiting(entry, StationPowerMessage, now);
@@ -2615,6 +2665,46 @@ namespace CraftQueue.Server
                     result.Add(type);
             }
             return result;
+        }
+        internal static int requiredStationLevel(HideoutProduction recipe)
+        {
+            int required = 1;
+            foreach (Requirement? requirement in recipe.Requirements ?? [])
+            {
+                if (requirement?.Type == "Area"
+                    && requirement.AreaType == (int?)recipe.AreaType
+                    && requirement.RequiredLevel > required)
+                    required = requirement.RequiredLevel.Value;
+            }
+            return required;
+        }
+        internal static string? stationLevelBlock(IEnumerable<BotHideoutArea>? stations, HideoutAreas area, int requiredLevel)
+        {
+            BotHideoutArea? station = stations?.FirstOrDefault(candidate => candidate?.Type == area);
+            if (station == null)
+                return null;
+
+            int level = station.Level ?? 0;
+            if (level >= requiredLevel)
+                return null;
+            return level <= 0
+                ? StationNotBuiltMessage
+                : $"Waiting for an upgrade: this recipe needs station level {requiredLevel}.";
+        }
+        private bool stationReadyFor(MongoId sessionId, string recipeId)
+        {
+            HideoutProduction? recipe = getProductionRecipe(recipeId);
+            if (recipe?.AreaType is not HideoutAreas area)
+                return true;
+
+            try
+            {
+                return stationLevelBlock(getPmcData(sessionId).Hideout?.Areas, area, requiredStationLevel(recipe)) == null;
+            }
+            catch (Exception)
+            {
+                return true;
+            }
         }
         internal static bool noteWaiting(QueuedProductionRequest entry, string reason, long now)
         {
@@ -2990,6 +3080,7 @@ namespace CraftQueue.Server
         public List<ActiveProductionTelemetry> Productions { get; set; } = [];
         public Dictionary<int, AreaSlotTelemetry> AreaSlots { get; set; } = [];
         public HashSet<string> AvailableRecipeIds { get; set; } = new(StringComparer.Ordinal);
+        public bool RecipeListKnown { get; set; }
     }
 
     public sealed class CraftQueueState

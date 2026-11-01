@@ -452,6 +452,10 @@ function renderRecipes(){
     return;
   }
   const available=new Set(state.availableRecipeIds||[]);
+  if(available.size===0){
+    root.innerHTML='<div class="empty">No recipes yet: build a crafting station in the hideout first.</div>';
+    return;
+  }
   const availability=state.materialAvailability||{};
   const filter=$('search').value.trim().toLowerCase();
   const searching=filter.length>0;

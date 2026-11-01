@@ -38,6 +38,7 @@ namespace CraftQueue
         private const int ClientApiTimeoutMs = 15000;
         private const int ConnectTimeoutMs = 3000;
         private const int MaximumLocalResponseBytes = 1024 * 1024;
+        private const float StallWarningSeconds = 60f;
 
         private readonly Dictionary<string, float> collectRetryAt = new Dictionary<string, float>(StringComparer.Ordinal);
         private readonly Dictionary<string, CachedCommandResult> commandResults = new Dictionary<string, CachedCommandResult>(StringComparer.Ordinal);
@@ -52,6 +53,10 @@ namespace CraftQueue
         private float nextChannelInfoRetry;
         private bool usingBackendFallback;
         private bool processing;
+        private float processingSince;
+        private string processingStep;
+        private string stalledStep;
+        private bool stallReported;
         private bool overlayHintLogged;
         private float lastActivityAt;
         private string lastSentRecipeIdsHash;
@@ -153,7 +158,12 @@ namespace CraftQueue
             else if (this.openWebInterfaceKey.Value.IsDown())
                 this.openWebInterface(false);
 
-            if (this.processing || Time.time < this.nextPoll)
+            if (this.processing)
+            {
+                this.warnIfStalled();
+                return;
+            }
+            if (Time.time < this.nextPoll)
                 return;
 
             this.nextPoll = Time.time + currentPollInterval();
@@ -167,6 +177,8 @@ namespace CraftQueue
         private async Task process()
         {
             this.processing = true;
+            this.processingSince = Time.realtimeSinceStartup;
+            this.stallReported = false;
             try
             {
                 HideoutRepresentation hideout;
@@ -174,10 +186,12 @@ namespace CraftQueue
                     return;
                 object executor = hideout.ProductionController;
 
+                this.processingStep = "collecting finished crafts";
                 await this.collectCompletedProductions(hideout, executor);
                 if (!isSameExecutor(hideout, executor))
                     return;
 
+                this.processingStep = "polling the CraftQueue server";
                 ClientPollResponse poll = await this.poll(hideout);
                 QueueClaim claim = poll == null ? null : poll.claim;
                 if (!isSameExecutor(hideout, executor))
@@ -186,6 +200,7 @@ namespace CraftQueue
                     return;
                 }
 
+                this.processingStep = "running commands from the web page";
                 await this.processCommands(hideout, poll == null ? null : poll.commands, poll == null ? null : poll.queueEntries);
                 if (!isSameExecutor(hideout, executor))
                 {
@@ -196,6 +211,7 @@ namespace CraftQueue
                 if (claim == null || string.IsNullOrEmpty(claim.queueId))
                     return;
 
+                this.processingStep = "starting the queued craft " + claim.recipeId;
                 await this.startClaimedCraft(hideout, claim);
             }
             catch (Exception ex)
@@ -208,8 +224,27 @@ namespace CraftQueue
             }
             finally
             {
+                if (this.stallReported)
+                {
+                    this.Logger.LogInfo(string.Format(
+                        "executor: resumed after {0:0} s (was {1}).",
+                        Time.realtimeSinceStartup - this.processingSince,
+                        this.stalledStep));
+                }
                 this.processing = false;
             }
+        }
+        private void warnIfStalled()
+        {
+            if (this.stallReported || Time.realtimeSinceStartup - this.processingSince < StallWarningSeconds)
+                return;
+
+            this.stallReported = true;
+            this.stalledStep = this.processingStep;
+            this.Logger.LogWarning(string.Format(
+                "executor: still waiting after {0:0} s while {1}; the queue is paused until this returns. If it never does, restart EFT and include this log when you report it.",
+                StallWarningSeconds,
+                this.stalledStep));
         }
 
         private static bool tryGetExecutorHideout(out HideoutRepresentation hideout)
@@ -347,6 +382,11 @@ namespace CraftQueue
                 await this.ack(claim.queueId, false, "recipe_unavailable", "Recipe is not available in the local hideout.");
                 return;
             }
+            if (!isStationBuilt(producer))
+            {
+                await this.ack(claim.queueId, false, "station_not_built", "This station has not been built yet.");
+                return;
+            }
             if (isRecipeOccupied(producer, claim.recipeId))
             {
                 await this.ack(claim.queueId, false, "recipe_busy", "This recipe is still running or waiting to be collected.");
@@ -385,7 +425,9 @@ namespace CraftQueue
                 if (scheme is ScavCaseScheme)
                 {
                     spent = hideout.RemoveSpentItems(items.Concat(tools));
+                    this.processingStep = "waiting for the game to start the scav case run " + claim.recipeId;
                     IResult result = await hideout._session.StartScavCaseProduction(scheme._id, items, tools);
+                    this.processingStep = "starting the queued craft " + claim.recipeId;
                     if (result == null || result.Failed)
                     {
                         if (spent != null)
@@ -479,6 +521,13 @@ namespace CraftQueue
                         result.error = "This recipe is not available for the current profile.";
                         return result;
                     }
+                    if (!isStationBuilt(producer))
+                    {
+                        result.success = false;
+                        result.errorCode = "station_not_built";
+                        result.error = "This station has not been built yet.";
+                        return result;
+                    }
 
                     string error;
                     result.success = validateProjectedRequirements(hideout, queueEntries, producer, scheme, out error);
@@ -500,7 +549,9 @@ namespace CraftQueue
                         return result;
                     }
 
+                    this.processingStep = "waiting for the game to cancel the craft " + command.recipeId;
                     IResult cancelResult = await hideout.CancelProduction(scheme);
+                    this.processingStep = "running commands from the web page";
                     result.success = cancelResult != null && cancelResult.Succeed;
                     result.errorCode = result.success ? null : "cancel_failed";
                     result.error = result.success
@@ -684,7 +735,9 @@ namespace CraftQueue
                             if (!isSameExecutor(hideout, executor))
                                 return;
 
+                            this.processingStep = "waiting for the game to hand over the finished craft " + recipeId;
                             bool collected = await hideout.GetProducedItems(producer, recipeId, false);
+                            this.processingStep = "collecting finished crafts";
                             if (collected)
                             {
                                 producer.GetItems(recipeId);
@@ -874,6 +927,10 @@ namespace CraftQueue
                 return true;
             return scheme is ProductionScheme && !scheme.continuous;
         }
+        private static bool isStationBuilt(ItemsProducerBase producer)
+        {
+            return producer.AreaData != null && producer.AreaData.CurrentLevel > 0;
+        }
 
         private static ProductionData lookupSnapshot(
             Dictionary<string, ProductionData> snapshot,
@@ -916,7 +973,7 @@ namespace CraftQueue
                     continue;
                 foreach (ItemsProducerBase producer in producers)
                 {
-                    if (producer == null || producer.Schemes == null)
+                    if (producer == null || producer.Schemes == null || !isStationBuilt(producer))
                         continue;
                     foreach (BaseHideoutScheme scheme in producer.Schemes.Values)
                     {
